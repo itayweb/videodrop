@@ -1,0 +1,7 @@
+password: "changeme"
+mounts:
+  - name: "Media HDD"
+    path: "/mnt/media"
+  - name: "Backup NAS"
+    path: "/mnt/backup"
+max_concurrent_jobs: 2
