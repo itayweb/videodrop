@@ -50,7 +50,7 @@ export function JobProgress({ token, jobId, source, type, mountName, initialStat
 
   useEffect(() => {
     const ws = openJobSocket(token, jobId, (data: ProgressMsg) => {
-      setMsg(data);
+      setMsg({ ...data, pct: data.pct ?? 0 });
       if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
         setTimeout(() => onDone?.(), 2000);
       }
@@ -93,7 +93,7 @@ export function JobProgress({ token, jobId, source, type, mountName, initialStat
           <span className="flex gap-3">
             {msg.speed && <span>{msg.speed}</span>}
             {msg.eta && <span>ETA {msg.eta}</span>}
-            {!msg.speed && <span>{msg.pct.toFixed(0)}%</span>}
+            {!msg.speed && <span>{(msg.pct ?? 0).toFixed(0)}%</span>}
           </span>
         </div>
 
