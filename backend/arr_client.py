@@ -1,4 +1,5 @@
 """Async HTTP client for Sonarr and Radarr APIs."""
+import asyncio
 import httpx
 from .config import ArrConfig
 
@@ -20,7 +21,6 @@ async def sonarr_search(cfg: ArrConfig, query: str) -> list[dict]:
         r.raise_for_status()
         results = r.json()
 
-    # Normalise: include `id` field (non-zero means already in Sonarr)
     out = []
     for s in results[:10]:
         out.append({
@@ -35,7 +35,6 @@ async def sonarr_search(cfg: ArrConfig, query: str) -> list[dict]:
 
 
 async def sonarr_get_default_profile_id(cfg: ArrConfig) -> int:
-    """Return the first quality profile id (used when adding a new series)."""
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
             f"{cfg.url.rstrip('/')}/api/v3/qualityprofile",
@@ -49,7 +48,6 @@ async def sonarr_get_default_profile_id(cfg: ArrConfig) -> int:
 
 
 async def sonarr_get_root_folder(cfg: ArrConfig) -> str:
-    """Return the first root folder path configured in Sonarr."""
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
             f"{cfg.url.rstrip('/')}/api/v3/rootfolder",
@@ -62,8 +60,27 @@ async def sonarr_get_root_folder(cfg: ArrConfig) -> str:
     return folders[0]["path"]
 
 
-async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int) -> dict:
-    """Add a series to Sonarr (creates its folder). Returns the created series."""
+async def sonarr_get_series_id(cfg: ArrConfig, tvdb_id: int) -> int | None:
+    """Return Sonarr's internal series id for a given tvdbId, or None if not found."""
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            f"{cfg.url.rstrip('/')}/api/v3/series",
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+    for s in r.json():
+        if s.get("tvdbId") == tvdb_id:
+            return s["id"]
+    return None
+
+
+async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int) -> int:
+    """Add a series to Sonarr (creates its folder). Returns the Sonarr series id."""
+    # If already exists just return its id
+    existing_id = await sonarr_get_series_id(cfg, tvdb_id)
+    if existing_id:
+        return existing_id
+
     profile_id = await sonarr_get_default_profile_id(cfg)
     root_folder = await sonarr_get_root_folder(cfg)
 
@@ -87,15 +104,60 @@ async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int)
             headers=_headers(cfg),
         )
         r.raise_for_status()
-        return r.json()
+        return r.json()["id"]
 
 
-async def sonarr_trigger_import(cfg: ArrConfig, file_path: str) -> None:
-    """Tell Sonarr to scan a specific path for downloaded episodes."""
-    async with httpx.AsyncClient(timeout=10) as client:
+async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -> None:
+    """Import a specific file into Sonarr using the manual import API.
+
+    Steps:
+      1. Ask Sonarr to analyse the file (GET manualimport) — gets quality, episode match etc.
+      2. POST manualimport to actually move/rename the file into the series folder.
+    """
+    base = cfg.url.rstrip("/")
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Step 1 — analyse
+        r = await client.get(
+            f"{base}/api/v3/manualimport",
+            params={
+                "path": file_path,
+                "seriesId": series_id,
+                "filterExistingFiles": "false",
+            },
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+        candidates = r.json()
+
+    if not candidates:
+        # Fall back to DownloadedEpisodesScan if manual import found nothing
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{base}/api/v3/command",
+                json={"name": "DownloadedEpisodesScan", "path": file_path},
+                headers=_headers(cfg),
+            )
+            r.raise_for_status()
+        return
+
+    # Step 2 — import
+    payload = []
+    for c in candidates:
+        payload.append({
+            "path": c["path"],
+            "seriesId": series_id,
+            "episodeIds": [ep["id"] for ep in c.get("episodes", [])],
+            "quality": c.get("quality"),
+            "languages": c.get("languages", []),
+            "releaseGroup": c.get("releaseGroup", ""),
+            "downloadId": c.get("downloadId", ""),
+            "importMode": "move",
+        })
+
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
-            f"{cfg.url.rstrip('/')}/api/v3/command",
-            json={"name": "DownloadedEpisodesScan", "path": file_path},
+            f"{base}/api/v3/manualimport",
+            json=payload,
             headers=_headers(cfg),
         )
         r.raise_for_status()
@@ -103,12 +165,50 @@ async def sonarr_trigger_import(cfg: ArrConfig, file_path: str) -> None:
 
 # ── Radarr ─────────────────────────────────────────────────────────────────────
 
-async def radarr_trigger_import(cfg: ArrConfig, file_path: str) -> None:
-    """Tell Radarr to scan a specific path for downloaded movies."""
-    async with httpx.AsyncClient(timeout=10) as client:
+async def radarr_manual_import(cfg: ArrConfig, file_path: str) -> None:
+    """Import a specific file into Radarr using the manual import API."""
+    base = cfg.url.rstrip("/")
+    async with httpx.AsyncClient(timeout=30) as client:
+        # Step 1 — analyse
+        r = await client.get(
+            f"{base}/api/v3/manualimport",
+            params={
+                "path": file_path,
+                "filterExistingFiles": "false",
+            },
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+        candidates = r.json()
+
+    if not candidates:
+        async with httpx.AsyncClient(timeout=10) as client:
+            r = await client.post(
+                f"{base}/api/v3/command",
+                json={"name": "DownloadedMoviesScan", "path": file_path},
+                headers=_headers(cfg),
+            )
+            r.raise_for_status()
+        return
+
+    payload = []
+    for c in candidates:
+        entry = {
+            "path": c["path"],
+            "quality": c.get("quality"),
+            "languages": c.get("languages", []),
+            "releaseGroup": c.get("releaseGroup", ""),
+            "downloadId": c.get("downloadId", ""),
+            "importMode": "move",
+        }
+        if c.get("movie"):
+            entry["movieId"] = c["movie"]["id"]
+        payload.append(entry)
+
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.post(
-            f"{cfg.url.rstrip('/')}/api/v3/command",
-            json={"name": "DownloadedMoviesScan", "path": file_path},
+            f"{base}/api/v3/manualimport",
+            json=payload,
             headers=_headers(cfg),
         )
         r.raise_for_status()

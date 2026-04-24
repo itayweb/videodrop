@@ -66,22 +66,21 @@ async def cancel_job(job_id: str):
 
 
 async def _post_download_hook(file_path, media_type: str, series_tvdb_id, series_title, series_year):
-    """Call Sonarr/Radarr after a successful download."""
-    from .arr_client import (
-        sonarr_add_series, sonarr_trigger_import, radarr_trigger_import
-    )
+    """Call Sonarr/Radarr after a successful download using manual import API."""
+    from .arr_client import sonarr_add_series, sonarr_manual_import, radarr_manual_import
     cfg = get_config()
 
     if media_type == "tv" and cfg.sonarr:
-        if series_tvdb_id and series_title:
-            try:
-                await sonarr_add_series(cfg.sonarr, series_tvdb_id, series_title, series_year or 0)
-            except Exception:
-                pass  # Series may already exist — that's fine
-        await sonarr_trigger_import(cfg.sonarr, str(file_path))
+        # Add series if needed (returns sonarr series id either way)
+        series_id = await sonarr_add_series(
+            cfg.sonarr, series_tvdb_id, series_title, series_year or 0
+        )
+        # Give Sonarr a moment to finish creating the series folder
+        await asyncio.sleep(3)
+        await sonarr_manual_import(cfg.sonarr, str(file_path), series_id)
 
     elif media_type == "movie" and cfg.radarr:
-        await radarr_trigger_import(cfg.radarr, str(file_path))
+        await radarr_manual_import(cfg.radarr, str(file_path))
 
 
 async def _worker():
