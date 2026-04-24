@@ -1,9 +1,16 @@
-"""yt-dlp wrapper that streams progress to the WebSocket hub."""
+"""yt-dlp wrapper that streams progress to the WebSocket hub.
+Private Telegram links (t.me/c/...) are routed to telegram_dl instead.
+"""
 import asyncio
+import re
 import yt_dlp
 from pathlib import Path
 from . import ws_hub
 from .db import update_job_status
+
+
+def _is_private_telegram(url: str) -> bool:
+    return bool(re.match(r"https?://t\.me/c/\d+/\d+", url.strip()))
 
 
 def _make_progress_hook(job_id: str, loop: asyncio.AbstractEventLoop):
@@ -29,7 +36,27 @@ def _make_progress_hook(job_id: str, loop: asyncio.AbstractEventLoop):
     return hook
 
 
+def _normalize_url(url: str) -> str:
+    """Rewrite t.me/channel/N → t.me/s/channel/N so yt-dlp can scrape it."""
+    import re
+    url = url.strip()
+    # Already has /s/ — leave it alone
+    if re.match(r"https?://t\.me/s/", url):
+        return url
+    # Plain t.me/<channel>/<id> — insert /s/
+    m = re.match(r"(https?://t\.me/)([^/]+/\d+.*)", url)
+    if m:
+        return m.group(1) + "s/" + m.group(2)
+    return url
+
+
 async def download_url(job_id: str, url: str, dest_dir: str) -> Path:
+    # Route private Telegram links to Telethon
+    if _is_private_telegram(url):
+        from .telegram_dl import download_private
+        return await download_private(job_id, url, dest_dir)
+
+    url = _normalize_url(url)
     loop = asyncio.get_event_loop()
     dest_path = Path(dest_dir)
     dest_path.mkdir(parents=True, exist_ok=True)

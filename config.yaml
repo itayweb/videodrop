@@ -5,3 +5,10 @@ mounts:
   - name: "Backup NAS"
     path: "/mnt/backup"
 max_concurrent_jobs: 2
+
+# Optional: needed for private Telegram channel links (t.me/c/...)
+# Get api_id and api_hash from https://my.telegram.org
+telegram:
+  api_id: 12345678
+  api_hash: "your_api_hash_here"
+  session_file: "telegram.session"
