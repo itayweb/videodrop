@@ -1,5 +1,5 @@
 """yt-dlp wrapper that streams progress to the WebSocket hub.
-Private Telegram links (t.me/c/...) are routed to telegram_dl instead.
+All t.me links (public and private) are routed to telegram_dl via Telethon.
 """
 import asyncio
 import re
@@ -9,8 +9,8 @@ from . import ws_hub
 from .db import update_job_status
 
 
-def _is_private_telegram(url: str) -> bool:
-    return bool(re.match(r"https?://t\.me/c/\d+/\d+", url.strip()))
+def _is_telegram(url: str) -> bool:
+    return bool(re.match(r"https?://t\.me/", url.strip()))
 
 
 def _make_progress_hook(job_id: str, loop: asyncio.AbstractEventLoop):
@@ -51,10 +51,10 @@ def _normalize_url(url: str) -> str:
 
 
 async def download_url(job_id: str, url: str, dest_dir: str) -> Path:
-    # Route private Telegram links to Telethon
-    if _is_private_telegram(url):
-        from .telegram_dl import download_private
-        return await download_private(job_id, url, dest_dir)
+    # Route all Telegram links (public and private) through Telethon
+    if _is_telegram(url):
+        from .telegram_dl import download_telegram
+        return await download_telegram(job_id, url, dest_dir)
 
     url = _normalize_url(url)
     loop = asyncio.get_event_loop()

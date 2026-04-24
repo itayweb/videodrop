@@ -1,4 +1,4 @@
-"""Telethon-based downloader for private Telegram channel links (t.me/c/...)."""
+"""Telethon-based downloader for all Telegram links (public and private)."""
 import asyncio
 import re
 from pathlib import Path
@@ -10,23 +10,27 @@ from .db import update_job_status
 BASE_DIR = Path(__file__).parent.parent
 
 
-def parse_private_link(url: str) -> tuple[int, int]:
-    """Parse t.me/c/<channel_id>/<message_id> → (peer_id, message_id).
+def parse_telegram_link(url: str) -> tuple[str | int, int]:
+    """Parse any t.me link and return (peer, message_id).
 
-    Telegram's internal channel ID is -100 prefixed, e.g. channel 2891054658
-    becomes -1002891054658.
+    Private:  t.me/c/<channel_id>/<msg_id>  → peer = -100<channel_id> (int)
+    Public:   t.me/<username>/<msg_id>       → peer = username (str)
     """
-    m = re.match(r"https?://t\.me/c/(\d+)/(\d+)", url.strip())
-    if not m:
-        raise ValueError(f"Not a valid private Telegram link: {url}")
-    channel_id = int(m.group(1))
-    message_id = int(m.group(2))
-    peer_id = int(f"-100{channel_id}")
-    return peer_id, message_id
+    url = url.strip()
+    # Private channel: t.me/c/1234567/89
+    m = re.match(r"https?://t\.me/c/(\d+)/(\d+)", url)
+    if m:
+        peer_id = int(f"-100{m.group(1)}")
+        return peer_id, int(m.group(2))
+    # Public channel: t.me/username/89  or  t.me/s/username/89
+    m = re.match(r"https?://t\.me/s?/?([^/]+)/(\d+)", url)
+    if m:
+        return m.group(1), int(m.group(2))
+    raise ValueError(f"Unrecognised Telegram link format: {url}")
 
 
-async def download_private(job_id: str, url: str, dest_dir: str) -> Path:
-    """Download media from a private Telegram channel message using Telethon."""
+async def download_telegram(job_id: str, url: str, dest_dir: str) -> Path:
+    """Download media from any Telegram channel message using Telethon."""
     from telethon import TelegramClient
 
     cfg = get_config()
@@ -37,7 +41,7 @@ async def download_private(job_id: str, url: str, dest_dir: str) -> Path:
 
     tg = cfg.telegram
     session_path = str(BASE_DIR / tg.session_file)
-    peer_id, message_id = parse_private_link(url)
+    peer, message_id = parse_telegram_link(url)
 
     dest_path = Path(dest_dir)
     dest_path.mkdir(parents=True, exist_ok=True)
@@ -59,7 +63,7 @@ async def download_private(job_id: str, url: str, dest_dir: str) -> Path:
                     "Telegram session not authorized. Run setup_session.py first."
                 )
 
-            message = await client.get_messages(peer_id, ids=message_id)
+            message = await client.get_messages(peer, ids=message_id)
             if message is None or message.media is None:
                 raise ValueError("No media found in that Telegram message.")
 
