@@ -72,7 +72,11 @@ def health():
 class UrlJobRequest(BaseModel):
     url: str
     mount_name: str
-    filename: str | None = None  # optional custom filename (without extension)
+    filename: str | None = None
+    media_type: str = "none"          # "none" | "tv" | "movie"
+    series_tvdb_id: int | None = None
+    series_title: str | None = None
+    series_year: int | None = None
 
 
 @app.post("/api/jobs/url", status_code=status.HTTP_202_ACCEPTED)
@@ -82,8 +86,36 @@ async def submit_url_job(req: UrlJobRequest, _: bool = Depends(require_auth)):
     if mount is None:
         raise HTTPException(400, f"Unknown mount: {req.mount_name}")
     job_id = new_job_id()
-    await enqueue_url_job(job_id, req.url, mount.path, mount.name, filename=req.filename)
+    await enqueue_url_job(
+        job_id, req.url, mount.path, mount.name,
+        filename=req.filename,
+        media_type=req.media_type,
+        series_tvdb_id=req.series_tvdb_id,
+        series_title=req.series_title,
+        series_year=req.series_year,
+    )
     return {"job_id": job_id}
+
+
+# ── Sonarr search ──────────────────────────────────────────────────────────────
+
+@app.get("/api/sonarr/search")
+async def sonarr_search_endpoint(q: str = Query(..., min_length=1), _: bool = Depends(require_auth)):
+    from .arr_client import sonarr_search
+    cfg = get_config()
+    if cfg.sonarr is None:
+        raise HTTPException(503, "Sonarr not configured")
+    results = await sonarr_search(cfg.sonarr, q)
+    return results
+
+
+@app.get("/api/arr/status")
+def arr_status(_: bool = Depends(require_auth)):
+    cfg = get_config()
+    return {
+        "sonarr": cfg.sonarr is not None,
+        "radarr": cfg.radarr is not None,
+    }
 
 
 # ── Chunked upload ─────────────────────────────────────────────────────────────

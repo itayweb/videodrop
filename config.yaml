@@ -6,6 +6,16 @@ mounts:
     path: "/mnt/backup"
 max_concurrent_jobs: 2
 
+# Optional: Sonarr integration for TV show imports
+# sonarr:
+#   url: "http://192.168.x.x:8989"
+#   api_key: "your_sonarr_api_key"
+
+# Optional: Radarr integration for movie imports
+# radarr:
+#   url: "http://192.168.x.x:7878"
+#   api_key: "your_radarr_api_key"
+
 # Optional: needed for private Telegram channel links (t.me/c/...)
 # Get api_id and api_hash from https://my.telegram.org
 telegram:

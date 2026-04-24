@@ -10,14 +10,45 @@ export async function fetchConfig(token: string) {
   return res.json() as Promise<{ mounts: { name: string; path: string }[] }>;
 }
 
-export async function submitUrl(token: string, url: string, mountName: string, filename?: string) {
+export async function submitUrl(
+  token: string,
+  url: string,
+  mountName: string,
+  filename?: string,
+  mediaType: "none" | "tv" | "movie" = "none",
+  seriesTvdbId?: number,
+  seriesTitle?: string,
+  seriesYear?: number,
+) {
   const res = await fetch("/api/jobs/url", {
     method: "POST",
     headers: { ...authHeader(token), "Content-Type": "application/json" },
-    body: JSON.stringify({ url, mount_name: mountName, filename: filename?.trim() || null }),
+    body: JSON.stringify({
+      url,
+      mount_name: mountName,
+      filename: filename?.trim() || null,
+      media_type: mediaType,
+      series_tvdb_id: seriesTvdbId ?? null,
+      series_title: seriesTitle ?? null,
+      series_year: seriesYear ?? null,
+    }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<{ job_id: string }>;
+}
+
+export async function searchSonarr(token: string, q: string) {
+  const res = await fetch(`/api/sonarr/search?q=${encodeURIComponent(q)}`, {
+    headers: authHeader(token),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<{ tvdbId: number; title: string; year: number; overview: string; inSonarr: boolean }[]>;
+}
+
+export async function fetchArrStatus(token: string) {
+  const res = await fetch("/api/arr/status", { headers: authHeader(token) });
+  if (!res.ok) return { sonarr: false, radarr: false };
+  return res.json() as Promise<{ sonarr: boolean; radarr: boolean }>;
 }
 
 export async function initUpload(
