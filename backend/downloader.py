@@ -50,11 +50,11 @@ def _normalize_url(url: str) -> str:
     return url
 
 
-async def download_url(job_id: str, url: str, dest_dir: str) -> Path:
+async def download_url(job_id: str, url: str, dest_dir: str, filename: str | None = None) -> Path:
     # Route all Telegram links (public and private) through Telethon
     if _is_telegram(url):
         from .telegram_dl import download_telegram
-        return await download_telegram(job_id, url, dest_dir)
+        return await download_telegram(job_id, url, dest_dir, filename=filename)
 
     url = _normalize_url(url)
     loop = asyncio.get_event_loop()

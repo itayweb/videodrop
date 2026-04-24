@@ -18,6 +18,7 @@ interface Props {
 
 export function UrlForm({ token, mounts, onJobCreated }: Props) {
   const [url, setUrl] = useState("");
+  const [filename, setFilename] = useState("");
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
@@ -28,9 +29,10 @@ export function UrlForm({ token, mounts, onJobCreated }: Props) {
     setError("");
     setLoading(true);
     try {
-      const { job_id } = await submitUrl(token, url.trim(), mount);
+      const { job_id } = await submitUrl(token, url.trim(), mount, filename || undefined);
       onJobCreated(job_id, url.trim(), mount);
       setUrl("");
+      setFilename("");
     } catch (err: any) {
       setError(err.message ?? "Failed to submit");
     } finally {
@@ -44,6 +46,12 @@ export function UrlForm({ token, mounts, onJobCreated }: Props) {
         placeholder="Paste Telegram video URL…"
         value={url}
         onChange={(e) => setUrl(e.target.value)}
+        disabled={loading}
+      />
+      <Input
+        placeholder="Custom filename (optional, without extension)"
+        value={filename}
+        onChange={(e) => setFilename(e.target.value)}
         disabled={loading}
       />
       <div className="flex gap-2">

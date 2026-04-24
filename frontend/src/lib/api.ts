@@ -10,11 +10,11 @@ export async function fetchConfig(token: string) {
   return res.json() as Promise<{ mounts: { name: string; path: string }[] }>;
 }
 
-export async function submitUrl(token: string, url: string, mountName: string) {
+export async function submitUrl(token: string, url: string, mountName: string, filename?: string) {
   const res = await fetch("/api/jobs/url", {
     method: "POST",
     headers: { ...authHeader(token), "Content-Type": "application/json" },
-    body: JSON.stringify({ url, mount_name: mountName }),
+    body: JSON.stringify({ url, mount_name: mountName, filename: filename?.trim() || null }),
   });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<{ job_id: string }>;

@@ -17,10 +17,10 @@ def new_job_id() -> str:
     return str(uuid.uuid4())
 
 
-async def enqueue_url_job(job_id: str, url: str, mount_path: str, mount_name: str):
+async def enqueue_url_job(job_id: str, url: str, mount_path: str, mount_name: str, filename: str | None = None):
     await insert_job(job_id, "url", url, mount_name)
     _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path}
-    await _queue.put(("url", job_id, url, mount_path))
+    await _queue.put(("url", job_id, url, mount_path, filename))
 
 
 async def enqueue_upload_job(job_id: str, filename: str, mount_path: str, mount_name: str):
@@ -43,7 +43,8 @@ async def _worker():
 
     while True:
         item = await _queue.get()
-        job_type, job_id, source, mount_path = item
+        job_type, job_id, source, mount_path, *rest = item
+        filename = rest[0] if rest else None
 
         if _active.get(job_id, {}).get("status") == "cancelled":
             _queue.task_done()
@@ -52,7 +53,7 @@ async def _worker():
         _active[job_id]["status"] = "running"
         try:
             if job_type == "url":
-                file_path = await download_url(job_id, source, mount_path)
+                file_path = await download_url(job_id, source, mount_path, filename=filename)
             else:
                 file_path = await assemble_and_move(job_id, source, mount_path)
 

@@ -29,7 +29,7 @@ def parse_telegram_link(url: str) -> tuple[str | int, int]:
     raise ValueError(f"Unrecognised Telegram link format: {url}")
 
 
-async def download_telegram(job_id: str, url: str, dest_dir: str) -> Path:
+async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str | None = None) -> Path:
     """Download media from any Telegram channel message using Telethon."""
     from telethon import TelegramClient
 
@@ -67,17 +67,25 @@ async def download_telegram(job_id: str, url: str, dest_dir: str) -> Path:
             if message is None or message.media is None:
                 raise ValueError("No media found in that Telegram message.")
 
-            # Determine filename from media attributes
-            filename = None
+            # Determine filename: custom > media attributes > fallback
+            orig_ext = ".mp4"
+            media_filename = None
             if hasattr(message.media, "document"):
                 for attr in message.media.document.attributes:
-                    if hasattr(attr, "file_name"):
-                        filename = attr.file_name
+                    if hasattr(attr, "file_name") and attr.file_name:
+                        media_filename = attr.file_name
+                        if "." in media_filename:
+                            orig_ext = "." + media_filename.rsplit(".", 1)[-1]
                         break
-            if not filename:
-                filename = f"telegram_{peer_id}_{message_id}.mp4"
 
-            out_file = dest_path / filename
+            if filename:
+                resolved_filename = filename.strip() + orig_ext
+            elif media_filename:
+                resolved_filename = media_filename
+            else:
+                resolved_filename = f"telegram_{peer}_{message_id}.mp4"
+
+            out_file = dest_path / resolved_filename
 
             def _progress(received: int, total: int):
                 pct = round((received / total) * 100, 1) if total else 0

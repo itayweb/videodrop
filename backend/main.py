@@ -72,6 +72,7 @@ def health():
 class UrlJobRequest(BaseModel):
     url: str
     mount_name: str
+    filename: str | None = None  # optional custom filename (without extension)
 
 
 @app.post("/api/jobs/url", status_code=status.HTTP_202_ACCEPTED)
@@ -81,7 +82,7 @@ async def submit_url_job(req: UrlJobRequest, _: bool = Depends(require_auth)):
     if mount is None:
         raise HTTPException(400, f"Unknown mount: {req.mount_name}")
     job_id = new_job_id()
-    await enqueue_url_job(job_id, req.url, mount.path, mount.name)
+    await enqueue_url_job(job_id, req.url, mount.path, mount.name, filename=req.filename)
     return {"job_id": job_id}
 
 
