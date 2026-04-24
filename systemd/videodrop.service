@@ -4,8 +4,8 @@ After=network.target
 
 [Service]
 Type=simple
-User=videodrop
-Group=videodrop
+User=root
+Group=root
 WorkingDirectory=/opt/videodrop
 ExecStart=/opt/videodrop/venv/bin/uvicorn backend.main:app --host 0.0.0.0 --port 8080
 Restart=on-failure
