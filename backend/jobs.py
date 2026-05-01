@@ -114,11 +114,11 @@ async def _worker():
             await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
             _active[job_id]["status"] = "done"
 
-            # Notify Sonarr/Radarr (non-fatal if it fails)
+            # Notify Sonarr/Radarr — surface errors to UI but keep job as "done"
             try:
                 await _post_download_hook(file_path, media_type, series_tvdb_id, series_title, series_year)
             except Exception as e:
-                # Log but don't fail the job
+                await update_job_status(job_id, "done", error=f"Import warning: {e}")
                 await ws_hub.broadcast(job_id, {"status": "done", "pct": 100, "arr_warning": str(e)})
 
         except Exception as e:

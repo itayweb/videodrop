@@ -12,6 +12,7 @@ interface ProgressMsg {
   speed?: string;
   eta?: string;
   error?: string;
+  arr_warning?: string;
 }
 
 interface Props {
@@ -99,6 +100,9 @@ export function JobProgress({ token, jobId, source, type, mountName, initialStat
 
         {msg.error && (
           <p className="mt-1 text-xs text-destructive">{msg.error}</p>
+        )}
+        {msg.arr_warning && (
+          <p className="mt-1 text-xs text-yellow-400">⚠ Sonarr/Radarr: {msg.arr_warning}</p>
         )}
       </CardContent>
     </Card>
