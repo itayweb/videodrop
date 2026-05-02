@@ -12,7 +12,7 @@ def _headers(cfg: ArrConfig) -> dict:
 
 async def sonarr_search(cfg: ArrConfig, query: str) -> list[dict]:
     """Search for a series by name. Returns both already-added and TVDB results."""
-    async with httpx.AsyncClient(timeout=10) as client:
+    async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
             f"{cfg.url.rstrip('/')}/api/v3/series/lookup",
             params={"term": query},
