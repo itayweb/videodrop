@@ -76,7 +76,7 @@ async def _post_download_hook(file_path, media_type: str, series_tvdb_id, series
             cfg.sonarr, series_tvdb_id, series_title, series_year or 0
         )
         # Give Sonarr a moment to finish creating the series folder
-        await asyncio.sleep(3)
+        await asyncio.sleep(8)
         await sonarr_manual_import(cfg.sonarr, str(file_path), series_id)
 
     elif media_type == "movie" and cfg.radarr:

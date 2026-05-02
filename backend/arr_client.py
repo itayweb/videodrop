@@ -109,7 +109,10 @@ async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int)
 
 async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -> None:
     """Import a specific file into Sonarr using the manual import API."""
+    import json as _json
     base = cfg.url.rstrip("/")
+
+    print(f"[sonarr] manual import: path={file_path!r}  seriesId={series_id}", flush=True)
 
     # Step 1 — ask Sonarr to analyse the file
     async with httpx.AsyncClient(timeout=30) as client:
@@ -125,10 +128,20 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
         r.raise_for_status()
         candidates = r.json()
 
+    print(f"[sonarr] GET manualimport returned {len(candidates)} candidate(s)", flush=True)
+    for i, c in enumerate(candidates):
+        eps = [ep.get("id") for ep in c.get("episodes", [])]
+        rejections = c.get("rejections", [])
+        print(
+            f"[sonarr]   [{i}] path={c.get('path')!r}  season={c.get('seasonNumber')}  "
+            f"episodeIds={eps}  rejections={rejections}",
+            flush=True,
+        )
+
     if not candidates:
         raise RuntimeError(
             f"Sonarr found no importable files at: {file_path}\n"
-            "Make sure the file is accessible from the Sonarr LXC at this path."
+            "Make sure the file is accessible from the Sonarr LXC at this exact path."
         )
 
     # Validate — surface any rejections Sonarr flagged
@@ -136,7 +149,7 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
         rejections = c.get("rejections", [])
         hard = [rej for rej in rejections if rej.get("type") == "permanent"]
         if hard:
-            reasons = ", ".join(r.get("reason", str(r)) for r in hard)
+            reasons = ", ".join(rej.get("reason", str(rej)) for rej in hard)
             raise RuntimeError(f"Sonarr rejected import: {reasons}")
 
     # Build the POST payload — include seasonNumber which is required
@@ -146,17 +159,21 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
         if not episode_ids:
             # Sonarr couldn't match to an episode — skip (won't import without episode)
             continue
-        payload.append({
+        entry = {
             "path": c["path"],
             "seriesId": series_id,
             "seasonNumber": c.get("seasonNumber", 0),
             "episodeIds": episode_ids,
             "quality": c.get("quality"),
             "languages": c.get("languages", []),
-            "releaseGroup": c.get("releaseGroup", ""),
-            "downloadId": c.get("downloadId", ""),
             "importMode": "move",
-        })
+        }
+        # Only include optional string fields if non-empty (empty strings confuse Sonarr)
+        if c.get("releaseGroup"):
+            entry["releaseGroup"] = c["releaseGroup"]
+        if c.get("downloadId"):
+            entry["downloadId"] = c["downloadId"]
+        payload.append(entry)
 
     if not payload:
         raise RuntimeError(
@@ -164,14 +181,27 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
             "Make sure the filename includes season/episode info, e.g. 'Show Name S01E01.mp4'."
         )
 
+    print(f"[sonarr] POST manualimport payload: {_json.dumps(payload, default=str)}", flush=True)
+
     # Step 2 — execute the import
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         r = await client.post(
             f"{base}/api/v3/manualimport",
             json=payload,
             headers=_headers(cfg),
         )
         r.raise_for_status()
+        result_body = r.json() if r.content else []
+        print(f"[sonarr] POST manualimport response ({r.status_code}): {_json.dumps(result_body, default=str)}", flush=True)
+
+        # Check per-item results for errors Sonarr embeds in the 200 body
+        if isinstance(result_body, list):
+            errors = []
+            for item in result_body:
+                if item.get("result") not in (None, "manualOverride", "importedSuccessfully", ""):
+                    errors.append(f"{item.get('path','?')} → {item.get('result')} ({item.get('errorMessage','')})")
+            if errors:
+                raise RuntimeError("Sonarr import errors: " + "; ".join(errors))
 
 
 # ── Radarr ─────────────────────────────────────────────────────────────────────
