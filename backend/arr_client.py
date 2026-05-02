@@ -114,21 +114,29 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
 
     print(f"[sonarr] manual import: path={file_path!r}  seriesId={series_id}", flush=True)
 
-    # Step 1 — ask Sonarr to analyse the file
+    # Step 1 — ask Sonarr to analyse the specific file.
+    # NOTE: do NOT pass seriesId here — when combined with filterExistingFiles=false it
+    # causes Sonarr to scan the *series folder* instead of the path we provide.
+    # filterExistingFiles=true excludes already-imported episodes from the result.
     async with httpx.AsyncClient(timeout=30) as client:
         r = await client.get(
             f"{base}/api/v3/manualimport",
             params={
                 "path": file_path,
-                "seriesId": series_id,
-                "filterExistingFiles": "false",
+                "filterExistingFiles": "true",
             },
             headers=_headers(cfg),
         )
         r.raise_for_status()
-        candidates = r.json()
+        all_candidates = r.json()
 
-    print(f"[sonarr] GET manualimport returned {len(candidates)} candidate(s)", flush=True)
+    # Keep only the candidate matching our specific file (Sonarr may scan the whole folder)
+    candidates = [c for c in all_candidates if c.get("path") == file_path]
+    if not candidates:
+        # Fallback: accept whatever Sonarr found (first candidate)
+        candidates = all_candidates
+
+    print(f"[sonarr] GET manualimport: {len(all_candidates)} total, {len(candidates)} for our file", flush=True)
     for i, c in enumerate(candidates):
         eps = [ep.get("id") for ep in c.get("episodes", [])]
         rejections = c.get("rejections", [])
@@ -152,11 +160,14 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
             reasons = ", ".join(rej.get("reason", str(rej)) for rej in hard)
             raise RuntimeError(f"Sonarr rejected import: {reasons}")
 
-    # Build the POST payload — include seasonNumber which is required
+    # Build the POST payload.
+    # Always inject our seriesId so Sonarr links to the right show even if
+    # it couldn't auto-detect the series from the filename.
     payload = []
     for c in candidates:
         episode_ids = [ep["id"] for ep in c.get("episodes", [])]
         if not episode_ids:
+            print(f"[sonarr] WARNING: no episode match for {c.get('path')!r} — Sonarr could not parse season/episode from filename", flush=True)
             # Sonarr couldn't match to an episode — skip (won't import without episode)
             continue
         entry = {
@@ -168,7 +179,7 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
             "languages": c.get("languages", []),
             "importMode": "move",
         }
-        # Only include optional string fields if non-empty (empty strings confuse Sonarr)
+        # Only include optional string fields if non-empty
         if c.get("releaseGroup"):
             entry["releaseGroup"] = c["releaseGroup"]
         if c.get("downloadId"):
@@ -178,7 +189,7 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
     if not payload:
         raise RuntimeError(
             f"Sonarr could not match '{file_path}' to any episode.\n"
-            "Make sure the filename includes season/episode info, e.g. 'Show Name S01E01.mp4'."
+            "Rename the file to include standard episode notation, e.g. 'Show.Name.S01E05.mp4' (no underscores between S and E)."
         )
 
     print(f"[sonarr] POST manualimport payload: {_json.dumps(payload, default=str)}", flush=True)
