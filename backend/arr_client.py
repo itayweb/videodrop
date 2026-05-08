@@ -115,14 +115,15 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
     print(f"[sonarr] manual import: path={file_path!r}  seriesId={series_id}", flush=True)
 
     # Step 1 — ask Sonarr to analyse the specific file.
-    # NOTE: do NOT pass seriesId here — when combined with filterExistingFiles=false it
-    # causes Sonarr to scan the *series folder* instead of the path we provide.
+    # NOTE: Sonarr v3 uses the query param "folder" (not "path") for the scan target.
+    # do NOT pass seriesId here — when combined with filterExistingFiles=false it
+    # causes Sonarr to scan the *series folder* instead of the folder we provide.
     # filterExistingFiles=true excludes already-imported episodes from the result.
-    async with httpx.AsyncClient(timeout=30) as client:
+    async with httpx.AsyncClient(timeout=60) as client:
         r = await client.get(
             f"{base}/api/v3/manualimport",
             params={
-                "path": file_path,
+                "folder": file_path,
                 "filterExistingFiles": "true",
             },
             headers=_headers(cfg),
@@ -220,13 +221,13 @@ async def sonarr_manual_import(cfg: ArrConfig, file_path: str, series_id: int) -
 async def radarr_manual_import(cfg: ArrConfig, file_path: str) -> None:
     """Import a specific file into Radarr using the manual import API."""
     base = cfg.url.rstrip("/")
-    async with httpx.AsyncClient(timeout=30) as client:
-        # Step 1 — analyse
+    async with httpx.AsyncClient(timeout=60) as client:
+        # Step 1 — analyse (Sonarr/Radarr v3 uses "folder" not "path")
         r = await client.get(
             f"{base}/api/v3/manualimport",
             params={
-                "path": file_path,
-                "filterExistingFiles": "false",
+                "folder": file_path,
+                "filterExistingFiles": "true",
             },
             headers=_headers(cfg),
         )
