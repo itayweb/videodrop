@@ -20,6 +20,7 @@ interface ActiveJob {
   source: string;
   type: "url" | "upload";
   mountName: string;
+  customFileName?: string;
 }
 
 interface HistoryJob {
@@ -103,8 +104,8 @@ export default function App() {
     if (token) login(token).catch(() => setAuthed(false));
   }, []);
 
-  function handleJobCreated(jobId: string, source: string, mountName: string, type: "url" | "upload") {
-    setActiveJobs((prev) => [...prev, { jobId, source, type, mountName }]);
+  function handleJobCreated(jobId: string, source: string, mountName: string, type: "url" | "upload", customFileName?: string) {
+    setActiveJobs((prev) => [...prev, { jobId, source, type, mountName, customFileName }]);
   }
 
   function handleJobDone(jobId: string) {
@@ -146,6 +147,7 @@ export default function App() {
                 source={j.source}
                 type={j.type}
                 mountName={j.mountName}
+                customFileName={j.customFileName}
                 onDone={() => handleJobDone(j.jobId)}
               />
             ))}
@@ -177,7 +179,7 @@ export default function App() {
               <UrlForm
                 token={token}
                 mounts={mounts}
-                onJobCreated={(id, src, mount) => handleJobCreated(id, src, mount, "url")}
+                onJobCreated={(id, src, mount, customFileName) => handleJobCreated(id, src, mount, "url", customFileName)}
               />
             </section>
             <div className="border-t border-border" />

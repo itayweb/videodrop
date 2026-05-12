@@ -21,6 +21,7 @@ interface Props {
   source: string;
   type: "url" | "upload";
   mountName: string;
+  customFileName?: string;
   initialStatus?: string;
   onDone?: () => void;
 }
@@ -45,7 +46,7 @@ function statusVariant(s: string): "default" | "success" | "destructive" | "warn
   return "default";
 }
 
-export function JobProgress({ token, jobId, source, type, mountName, initialStatus = "queued", onDone }: Props) {
+export function JobProgress({ token, jobId, source, type, mountName, customFileName, initialStatus = "queued", onDone }: Props) {
   const [msg, setMsg] = useState<ProgressMsg>({ status: initialStatus, pct: 0 });
   const wsRef = useRef<WebSocket | null>(null);
 
@@ -68,9 +69,14 @@ export function JobProgress({ token, jobId, source, type, mountName, initialStat
     <Card className="mb-3">
       <CardContent className="pt-4 pb-3">
         <div className="flex items-start justify-between gap-3 mb-2">
-          <div className="flex items-center gap-2 min-w-0">
-            {type === "url" ? <Download className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />}
-            <span className="text-sm truncate" title={source}>{shortSource}</span>
+          <div className="flex flex-col min-w-0">
+            <div className="flex items-center gap-2">
+              {type === "url" ? <Download className="h-4 w-4 shrink-0 text-muted-foreground" /> : <Upload className="h-4 w-4 shrink-0 text-muted-foreground" />}
+              <span className="text-sm truncate" title={source}>{shortSource}</span>
+            </div>
+            {customFileName && (
+              <span className="text-xs text-muted-foreground mt-0.5 ml-6">→ {customFileName}</span>
+            )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <Badge variant={statusVariant(msg.status)}>{label}</Badge>
