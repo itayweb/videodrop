@@ -20,7 +20,7 @@ interface SonarrResult {
 interface Props {
   token: string;
   mounts: Mount[];
-  onJobCreated: (jobId: string, source: string, mountName: string) => void;
+  onJobCreated: (jobId: string, source: string, mountName: string, customFileName?: string) => void;
 }
 
 type MediaType = "none" | "tv" | "movie";
@@ -107,7 +107,7 @@ export function UrlForm({ token, mounts, onJobCreated }: Props) {
         selectedSeries?.title,
         selectedSeries?.year,
       );
-      onJobCreated(job_id, url.trim(), mount);
+      onJobCreated(job_id, url.trim(), mount, filename || undefined);
       setUrl("");
       setFilename("");
       setSelectedSeries(null);

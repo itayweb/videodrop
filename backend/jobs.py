@@ -27,7 +27,7 @@ async def enqueue_url_job(
     series_year: int | None = None,
 ):
     await insert_job(job_id, "url", url, mount_name)
-    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path}
+    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path, "filename": filename}
     await _queue.put({
         "job_type": "url",
         "job_id": job_id,
