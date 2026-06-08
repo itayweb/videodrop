@@ -1,6 +1,8 @@
 """Asyncio job queue — max N concurrent workers."""
 import asyncio
+import time
 import uuid
+from pathlib import Path
 from . import ws_hub
 from .db import update_job_status, insert_job
 from .config import get_config
@@ -27,7 +29,7 @@ async def enqueue_url_job(
     series_year: int | None = None,
 ):
     await insert_job(job_id, "url", url, mount_name)
-    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path, "filename": filename}
+    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path, "filename": filename, "mount_name": mount_name, "started_at": None}
     await _queue.put({
         "job_type": "url",
         "job_id": job_id,
@@ -43,7 +45,7 @@ async def enqueue_url_job(
 
 async def enqueue_upload_job(job_id: str, filename: str, mount_path: str, mount_name: str):
     await insert_job(job_id, "upload", filename, mount_name)
-    _active[job_id] = {"id": job_id, "type": "upload", "status": "queued", "filename": filename, "mount_path": mount_path}
+    _active[job_id] = {"id": job_id, "type": "upload", "status": "queued", "filename": filename, "mount_path": mount_path, "mount_name": mount_name, "started_at": None}
     await _queue.put({
         "job_type": "upload",
         "job_id": job_id,
@@ -105,15 +107,21 @@ async def _worker():
             continue
 
         _active[job_id]["status"] = "running"
+        _active[job_id]["started_at"] = time.monotonic()
+        mount_name = _active[job_id].get("mount_name", mount_path)
         try:
             if job_type == "url":
                 file_path = await download_url(job_id, source, mount_path, filename=filename)
             else:
                 file_path = await assemble_and_move(job_id, source, mount_path)
 
+            duration = time.monotonic() - _active[job_id]["started_at"]
             await update_job_status(job_id, "done", dest_path=str(file_path))
             await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
             _active[job_id]["status"] = "done"
+
+            from .notifier import notify_job
+            await notify_job("done", Path(file_path).name, mount_name, duration)
 
             # Notify Sonarr/Radarr — surface errors to UI but keep job as "done"
             try:
@@ -123,9 +131,14 @@ async def _worker():
                 await ws_hub.broadcast(job_id, {"status": "done", "pct": 100, "arr_warning": str(e)})
 
         except Exception as e:
+            duration = time.monotonic() - (_active[job_id].get("started_at") or time.monotonic())
             await update_job_status(job_id, "failed", error=str(e))
             await ws_hub.broadcast(job_id, {"status": "failed", "error": str(e)})
             _active[job_id]["status"] = "failed"
+
+            from .notifier import notify_job
+            fname = _active[job_id].get("filename") or source
+            await notify_job("failed", fname, mount_name, duration, error=str(e))
         finally:
             _queue.task_done()
 
