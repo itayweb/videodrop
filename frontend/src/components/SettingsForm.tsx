@@ -68,20 +68,24 @@ export function SettingsForm({ token, onPasswordChanged }: Props) {
   }
 
   function addMount() {
+    if (!cfg) return;
     update({ mounts: [...cfg.mounts, { name: "", path: "" }] });
   }
 
   function removeMount(i: number) {
+    if (!cfg) return;
     update({ mounts: cfg.mounts.filter((_, idx) => idx !== i) });
   }
 
   function updateMount(i: number, patch: Partial<{ name: string; path: string }>) {
+    if (!cfg) return;
     const mounts = cfg.mounts.map((m, idx) => idx === i ? { ...m, ...patch } : m);
     update({ mounts });
   }
 
   async function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    if (!cfg) return;
     setSaving(true);
     setError("");
     setSuccess(false);
