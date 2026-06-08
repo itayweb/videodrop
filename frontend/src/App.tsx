@@ -6,6 +6,7 @@ import { UrlForm } from "./components/UrlForm";
 import { UploadZone } from "./components/UploadZone";
 import { JobProgress } from "./components/JobProgress";
 import { HistoryTable } from "./components/HistoryTable";
+import { SettingsForm } from "./components/SettingsForm";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
@@ -157,7 +158,7 @@ export default function App() {
         {/* New job tabs */}
         <Tabs.Root value={tab} onValueChange={setTab}>
           <Tabs.List className="flex border-b border-border mb-6">
-            {["new", "history"].map((t) => (
+            {["new", "history", "settings"].map((t) => (
               <Tabs.Trigger
                 key={t}
                 value={t}
@@ -168,7 +169,7 @@ export default function App() {
                     : "border-transparent text-muted-foreground hover:text-foreground"
                 )}
               >
-                {t === "new" ? "New Job" : "History"}
+                {t === "new" ? "New Job" : t === "history" ? "History" : "Settings"}
               </Tabs.Trigger>
             ))}
           </Tabs.List>
@@ -202,6 +203,10 @@ export default function App() {
               </Button>
             </div>
             <HistoryTable jobs={history} />
+          </Tabs.Content>
+
+          <Tabs.Content value="settings">
+            <SettingsForm token={token} onPasswordChanged={logout} />
           </Tabs.Content>
         </Tabs.Root>
       </main>

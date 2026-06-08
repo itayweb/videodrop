@@ -119,6 +119,36 @@ export async function fetchJobs(token: string) {
   return res.json() as Promise<{ active: any[]; history: any[] }>;
 }
 
+export interface FullConfig {
+  password: string;
+  mounts: { name: string; path: string }[];
+  max_concurrent_jobs: number;
+  telegram: {
+    api_id: number | null;
+    api_hash: string | null;
+    session_file: string;
+    bot_token: string | null;
+    chat_id: string | null;
+  } | null;
+  sonarr: { url: string; api_key: string } | null;
+  radarr: { url: string; api_key: string } | null;
+}
+
+export async function fetchFullConfig(token: string): Promise<FullConfig> {
+  const res = await fetch("/api/config/full", { headers: authHeader(token) });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json();
+}
+
+export async function saveConfig(token: string, cfg: FullConfig): Promise<void> {
+  const res = await fetch("/api/config", {
+    method: "PUT",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify(cfg),
+  });
+  if (!res.ok) throw new Error(await res.text());
+}
+
 export async function cancelJob(token: string, jobId: string) {
   await fetch(`/api/jobs/${jobId}`, {
     method: "DELETE",

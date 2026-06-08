@@ -20,7 +20,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 
 from .auth import check_token, require_auth
-from .config import get_config
+from .config import get_config, save_config, reload_config, Mount, TelegramConfig, ArrConfig, Config
 from .db import get_job, get_jobs, init_db
 from .jobs import (
     cancel_job,
@@ -60,6 +60,95 @@ app.add_middleware(
 def api_config(_: bool = Depends(require_auth)):
     cfg = get_config()
     return {"mounts": [{"name": m.name, "path": m.path} for m in cfg.mounts]}
+
+
+@app.get("/api/config/full")
+def api_config_full(_: bool = Depends(require_auth)):
+    cfg = get_config()
+
+    def _tg(t):
+        if t is None:
+            return None
+        return {
+            "api_id": t.api_id,
+            "api_hash": t.api_hash,
+            "session_file": t.session_file,
+            "bot_token": t.bot_token,
+            "chat_id": t.chat_id,
+        }
+
+    def _arr(a):
+        if a is None:
+            return None
+        return {"url": a.url, "api_key": a.api_key}
+
+    return {
+        "password": cfg.password,
+        "mounts": [{"name": m.name, "path": m.path} for m in cfg.mounts],
+        "max_concurrent_jobs": cfg.max_concurrent_jobs,
+        "telegram": _tg(cfg.telegram),
+        "sonarr": _arr(cfg.sonarr),
+        "radarr": _arr(cfg.radarr),
+    }
+
+
+class TelegramConfigIn(BaseModel):
+    api_id: int | None = None
+    api_hash: str | None = None
+    session_file: str = "telegram.session"
+    bot_token: str | None = None
+    chat_id: str | None = None
+
+
+class ArrConfigIn(BaseModel):
+    url: str
+    api_key: str
+
+
+class ConfigUpdateRequest(BaseModel):
+    password: str
+    mounts: list[dict]
+    max_concurrent_jobs: int = 2
+    telegram: TelegramConfigIn | None = None
+    sonarr: ArrConfigIn | None = None
+    radarr: ArrConfigIn | None = None
+
+
+@app.put("/api/config")
+def api_config_update(req: ConfigUpdateRequest, _: bool = Depends(require_auth)):
+    tg = None
+    if req.telegram and req.telegram.api_id and req.telegram.api_hash:
+        tg = TelegramConfig(
+            api_id=req.telegram.api_id,
+            api_hash=req.telegram.api_hash,
+            session_file=req.telegram.session_file or "telegram.session",
+            bot_token=req.telegram.bot_token or None,
+            chat_id=req.telegram.chat_id or None,
+        )
+    elif req.telegram and (req.telegram.bot_token or req.telegram.chat_id):
+        # bot-only config (no Telethon download credentials)
+        tg = TelegramConfig(
+            api_id=0,
+            api_hash="",
+            session_file="telegram.session",
+            bot_token=req.telegram.bot_token or None,
+            chat_id=req.telegram.chat_id or None,
+        )
+
+    sonarr = ArrConfig(url=req.sonarr.url, api_key=req.sonarr.api_key) if req.sonarr else None
+    radarr = ArrConfig(url=req.radarr.url, api_key=req.radarr.api_key) if req.radarr else None
+
+    cfg = Config(
+        password=req.password,
+        mounts=[Mount(name=m["name"], path=m["path"]) for m in req.mounts],
+        max_concurrent_jobs=req.max_concurrent_jobs,
+        telegram=tg,
+        sonarr=sonarr,
+        radarr=radarr,
+    )
+    save_config(cfg)
+    reload_config()
+    return {"ok": True}
 
 
 @app.get("/api/health")

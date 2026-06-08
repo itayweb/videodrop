@@ -1,6 +1,6 @@
 import yaml
 from pathlib import Path
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, asdict
 from typing import Optional
 
 CONFIG_PATH = Path(__file__).parent.parent / "config.yaml"
@@ -23,6 +23,8 @@ class TelegramConfig:
     api_id: int
     api_hash: str
     session_file: str = "telegram.session"
+    bot_token: str | None = None
+    chat_id: str | None = None
 
 
 @dataclass
@@ -64,3 +66,41 @@ def get_config() -> Config:
     if _config is None:
         return load_config()
     return _config
+
+
+def reload_config() -> Config:
+    """Force re-read from disk, busting the cache."""
+    global _config
+    _config = None
+    return load_config()
+
+
+def save_config(cfg: Config) -> None:
+    """Serialize cfg back to yaml and write to disk."""
+    def _arr(a):
+        return {"url": a.url, "api_key": a.api_key} if a else None
+
+    def _tg(t):
+        if t is None:
+            return None
+        d = {"api_id": t.api_id, "api_hash": t.api_hash, "session_file": t.session_file}
+        if t.bot_token is not None:
+            d["bot_token"] = t.bot_token
+        if t.chat_id is not None:
+            d["chat_id"] = t.chat_id
+        return d
+
+    data = {
+        "password": cfg.password,
+        "mounts": [{"name": m.name, "path": m.path} for m in cfg.mounts],
+        "max_concurrent_jobs": cfg.max_concurrent_jobs,
+    }
+    if cfg.telegram:
+        data["telegram"] = _tg(cfg.telegram)
+    if cfg.sonarr:
+        data["sonarr"] = _arr(cfg.sonarr)
+    if cfg.radarr:
+        data["radarr"] = _arr(cfg.radarr)
+
+    with open(CONFIG_PATH, "w") as f:
+        yaml.safe_dump(data, f, allow_unicode=True, sort_keys=False)
