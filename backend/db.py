@@ -1,4 +1,5 @@
 import aiosqlite
+from contextlib import asynccontextmanager
 from pathlib import Path
 from datetime import datetime, timezone
 
@@ -19,15 +20,27 @@ CREATE TABLE IF NOT EXISTS jobs (
 """
 
 
-async def init_db():
+@asynccontextmanager
+async def _connect():
     async with aiosqlite.connect(DB_PATH) as db:
+        # busy_timeout is per-connection: wait up to 5s on a locked DB
+        # instead of failing immediately with SQLITE_BUSY
+        await db.execute("PRAGMA busy_timeout = 5000")
+        yield db
+
+
+async def init_db():
+    async with _connect() as db:
+        # WAL is persistent (stored in the DB file), so setting it once here
+        # covers all future connections
+        await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(CREATE_SQL)
         await db.commit()
 
 
 async def insert_job(job_id: str, job_type: str, source: str, dest_mount: str):
     now = datetime.now(timezone.utc).isoformat()
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "INSERT INTO jobs (id, type, source, dest_mount, status, created_at) VALUES (?,?,?,?,?,?)",
             (job_id, job_type, source, dest_mount, "queued", now),
@@ -37,7 +50,7 @@ async def insert_job(job_id: str, job_type: str, source: str, dest_mount: str):
 
 async def update_job_status(job_id: str, status: str, error: str | None = None, dest_path: str | None = None):
     finished_at = datetime.now(timezone.utc).isoformat() if status in ("done", "failed", "cancelled") else None
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         await db.execute(
             "UPDATE jobs SET status=?, error=?, dest_path=COALESCE(?,dest_path), finished_at=COALESCE(?,finished_at) WHERE id=?",
             (status, error, dest_path, finished_at, job_id),
@@ -46,7 +59,7 @@ async def update_job_status(job_id: str, status: str, error: str | None = None, 
 
 
 async def get_jobs(limit: int = 100) -> list[dict]:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute(
             "SELECT * FROM jobs ORDER BY created_at DESC LIMIT ?", (limit,)
@@ -56,7 +69,7 @@ async def get_jobs(limit: int = 100) -> list[dict]:
 
 
 async def get_job(job_id: str) -> dict | None:
-    async with aiosqlite.connect(DB_PATH) as db:
+    async with _connect() as db:
         db.row_factory = aiosqlite.Row
         async with db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)) as cursor:
             row = await cursor.fetchone()
