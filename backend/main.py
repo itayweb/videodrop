@@ -41,6 +41,8 @@ async def lifespan(app: FastAPI):
     await init_db()
     await start_workers()
     yield
+    from .telegram_dl import close_client
+    await close_client()
 
 
 app = FastAPI(title="VideoDrop", lifespan=lifespan)

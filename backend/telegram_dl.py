@@ -9,6 +9,48 @@ from .db import update_job_status
 
 BASE_DIR = Path(__file__).parent.parent
 
+# Telethon's session storage is a SQLite file that cannot be shared by
+# multiple clients at once — a second concurrent client raises
+# "database is locked". All downloads share this single client instead.
+_client = None
+_client_lock = asyncio.Lock()
+
+
+async def _get_client():
+    """Return the shared, connected TelegramClient (created on first use)."""
+    global _client
+    from telethon import TelegramClient
+
+    cfg = get_config()
+    if cfg.telegram is None:
+        raise RuntimeError(
+            "Telegram credentials not configured. Add a 'telegram:' block to config.yaml."
+        )
+    tg = cfg.telegram
+
+    async with _client_lock:
+        if _client is not None and _client.is_connected():
+            return _client
+        session_path = str(BASE_DIR / tg.session_file)
+        client = TelegramClient(session_path, tg.api_id, tg.api_hash)
+        await client.connect()
+        if not await client.is_user_authorized():
+            await client.disconnect()
+            raise RuntimeError(
+                "Telegram session not authorized. Run setup_session.py first."
+            )
+        _client = client
+        return _client
+
+
+async def close_client():
+    """Disconnect the shared client (called on app shutdown)."""
+    global _client
+    async with _client_lock:
+        if _client is not None:
+            await _client.disconnect()
+            _client = None
+
 
 def parse_telegram_link(url: str) -> tuple[str | int, int]:
     """Parse any t.me link and return (peer, message_id).
@@ -31,16 +73,6 @@ def parse_telegram_link(url: str) -> tuple[str | int, int]:
 
 async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str | None = None) -> Path:
     """Download media from any Telegram channel message using Telethon."""
-    from telethon import TelegramClient
-
-    cfg = get_config()
-    if cfg.telegram is None:
-        raise RuntimeError(
-            "Telegram credentials not configured. Add a 'telegram:' block to config.yaml."
-        )
-
-    tg = cfg.telegram
-    session_path = str(BASE_DIR / tg.session_file)
     peer, message_id = parse_telegram_link(url)
 
     dest_path = Path(dest_dir)
@@ -49,66 +81,40 @@ async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str 
     await update_job_status(job_id, "running")
     await ws_hub.broadcast(job_id, {"status": "running", "pct": 0})
 
-    loop = asyncio.get_event_loop()
+    client = await _get_client()
 
-    def _run():
-        import asyncio as _asyncio
+    message = await client.get_messages(peer, ids=message_id)
+    if message is None or message.media is None:
+        raise ValueError("No media found in that Telegram message.")
 
-        async def _download():
-            client = TelegramClient(session_path, tg.api_id, tg.api_hash)
-            await client.connect()
+    # Determine filename: custom > media attributes > fallback
+    orig_ext = ".mp4"
+    media_filename = None
+    if hasattr(message.media, "document"):
+        for attr in message.media.document.attributes:
+            if hasattr(attr, "file_name") and attr.file_name:
+                media_filename = attr.file_name
+                if "." in media_filename:
+                    orig_ext = "." + media_filename.rsplit(".", 1)[-1]
+                break
 
-            if not await client.is_user_authorized():
-                raise RuntimeError(
-                    "Telegram session not authorized. Run setup_session.py first."
-                )
+    if filename:
+        resolved_filename = filename.strip() + orig_ext
+    elif media_filename:
+        resolved_filename = media_filename
+    else:
+        resolved_filename = f"telegram_{peer}_{message_id}.mp4"
 
-            message = await client.get_messages(peer, ids=message_id)
-            if message is None or message.media is None:
-                raise ValueError("No media found in that Telegram message.")
+    out_file = dest_path / resolved_filename
 
-            # Determine filename: custom > media attributes > fallback
-            orig_ext = ".mp4"
-            media_filename = None
-            if hasattr(message.media, "document"):
-                for attr in message.media.document.attributes:
-                    if hasattr(attr, "file_name") and attr.file_name:
-                        media_filename = attr.file_name
-                        if "." in media_filename:
-                            orig_ext = "." + media_filename.rsplit(".", 1)[-1]
-                        break
+    async def _progress(received: int, total: int):
+        pct = round((received / total) * 100, 1) if total else 0
+        await ws_hub.broadcast(
+            job_id,
+            {"status": "downloading", "pct": pct, "speed": "", "eta": ""},
+        )
 
-            if filename:
-                resolved_filename = filename.strip() + orig_ext
-            elif media_filename:
-                resolved_filename = media_filename
-            else:
-                resolved_filename = f"telegram_{peer}_{message_id}.mp4"
-
-            out_file = dest_path / resolved_filename
-
-            def _progress(received: int, total: int):
-                pct = round((received / total) * 100, 1) if total else 0
-                _asyncio.run_coroutine_threadsafe(
-                    ws_hub.broadcast(
-                        job_id,
-                        {"status": "downloading", "pct": pct, "speed": "", "eta": ""},
-                    ),
-                    loop,
-                )
-
-            await client.download_media(message, file=str(out_file), progress_callback=_progress)
-            await client.disconnect()
-            return out_file
-
-        # Run nested async in a fresh event loop inside the thread
-        new_loop = _asyncio.new_event_loop()
-        try:
-            return new_loop.run_until_complete(_download())
-        finally:
-            new_loop.close()
-
-    out_file = await loop.run_in_executor(None, _run)
+    await client.download_media(message, file=str(out_file), progress_callback=_progress)
 
     await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
     return Path(out_file)
