@@ -27,9 +27,12 @@ async def enqueue_url_job(
     series_tvdb_id: int | None = None,
     series_title: str | None = None,
     series_year: int | None = None,
+    dest_subpath: str | None = None,
+    batch_id: str | None = None,
+    batch_label: str | None = None,
 ):
-    await insert_job(job_id, "url", url, mount_name)
-    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path, "filename": filename, "mount_name": mount_name, "started_at": None}
+    await insert_job(job_id, "url", url, mount_name, batch_id=batch_id, batch_label=batch_label)
+    _active[job_id] = {"id": job_id, "type": "url", "status": "queued", "url": url, "mount_path": mount_path, "filename": filename, "mount_name": mount_name, "started_at": None, "batch_id": batch_id, "batch_label": batch_label}
     await _queue.put({
         "job_type": "url",
         "job_id": job_id,
@@ -40,6 +43,7 @@ async def enqueue_url_job(
         "series_tvdb_id": series_tvdb_id,
         "series_title": series_title,
         "series_year": series_year,
+        "dest_subpath": dest_subpath,
     })
 
 
@@ -111,7 +115,9 @@ async def _worker():
         mount_name = _active[job_id].get("mount_name", mount_path)
         try:
             if job_type == "url":
-                file_path = await download_url(job_id, source, mount_path, filename=filename)
+                dest_subpath = item.get("dest_subpath")
+                target_dir = str(Path(mount_path) / dest_subpath) if dest_subpath else mount_path
+                file_path = await download_url(job_id, source, target_dir, filename=filename)
             else:
                 file_path = await assemble_and_move(job_id, source, mount_path)
 
