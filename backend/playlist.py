@@ -19,6 +19,8 @@ _EP_ENGLISH_RE = re.compile(r"(?:episode|ep\.?)\s*(\d{1,4})", re.IGNORECASE)
 # words like "פרק חדש"; single letter may carry a geresh (ה') or stand bare
 _EP_GEMATRIA_RE = re.compile(r"פרק\s+(?:([א-ת]{1,2})\"([א-ת])|([א-ת])'?(?![א-ת]))")
 _SEASON_DIGIT_RE = re.compile(r"עונה\s*[:#-]?\s*(\d{1,2})")
+# Leftover season/episode markers at the start of a stripped title remainder
+_LEADING_MARKER_RE = re.compile(r"^(?:עונה|פרק|חלק)\s*[:#-]?\s*\d{1,4}\s*")
 
 _GEMATRIA = {
     "א": 1, "ב": 2, "ג": 3, "ד": 4, "ה": 5, "ו": 6, "ז": 7, "ח": 8, "ט": 9,
@@ -66,12 +68,19 @@ def strip_episode_prefix(title: str) -> str:
     if number is None or m is None:
         return title
     remainder = normalized[m.end():].lstrip(" -–—:|.")
+    # Titles like "פרק 3 עונה 5 קלאסי" repeat season/episode markers after the
+    # first one — strip leading leftovers so SxxEyy isn't re-encoded in the name
+    while True:
+        stripped = _LEADING_MARKER_RE.sub("", remainder).lstrip(" -–—:|.")
+        if stripped == remainder:
+            break
+        remainder = stripped
     return remainder.strip() or title
 
 
-def parse_season_number(playlist_title: str) -> int:
-    m = _SEASON_DIGIT_RE.search(_normalize_title(playlist_title))
-    return int(m.group(1)) if m else 1
+def parse_season_number(title: str) -> int | None:
+    m = _SEASON_DIGIT_RE.search(_normalize_title(title))
+    return int(m.group(1)) if m else None
 
 
 def sanitize_filename(name: str) -> str:
@@ -166,11 +175,12 @@ async def build_preview(url: str) -> dict:
             "translated_title": sanitize_filename(translated_title) if not entry["unavailable"] else translated_title,
             "translated": ok,
             "episode_number": None if entry["unavailable"] else parse_episode_number(entry["orig_title"]),
+            "season_number": None if entry["unavailable"] else parse_season_number(entry["orig_title"]),
         })
 
     return {
         "playlist_title": meta["title"],
         "playlist_title_translated": playlist_title_translated,
-        "suggested_season": parse_season_number(meta["title"]),
+        "suggested_season": parse_season_number(meta["title"]) or 1,
         "entries": entries,
     }

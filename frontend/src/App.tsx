@@ -1,10 +1,11 @@
 import { useEffect, useState, useCallback } from "react";
 import { Film, RefreshCw, LogOut } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { fetchConfig, fetchJobs } from "./lib/api";
+import { fetchConfig, fetchJobs, PlaylistConfirmResult } from "./lib/api";
 import { UrlForm } from "./components/UrlForm";
 import { UploadZone } from "./components/UploadZone";
 import { JobProgress } from "./components/JobProgress";
+import { BatchProgress } from "./components/BatchProgress";
 import { HistoryTable } from "./components/HistoryTable";
 import { SettingsForm } from "./components/SettingsForm";
 import { Button } from "./components/ui/button";
@@ -22,8 +23,14 @@ interface ActiveJob {
   type: "url" | "upload";
   mountName: string;
   customFileName?: string;
-  batchId?: string;
-  batchLabel?: string;
+}
+
+interface ActiveBatch {
+  batchId: string;
+  batchLabel: string;
+  mountName: string;
+  jobs: { job_id: string; filename: string }[];
+  skippedCount: number;
 }
 
 interface HistoryJob {
@@ -81,6 +88,7 @@ export default function App() {
   const [authed, setAuthed] = useState(false);
   const [mounts, setMounts] = useState<Mount[]>([]);
   const [activeJobs, setActiveJobs] = useState<ActiveJob[]>([]);
+  const [activeBatches, setActiveBatches] = useState<ActiveBatch[]>([]);
   const [history, setHistory] = useState<HistoryJob[]>([]);
   const [tab, setTab] = useState("new");
   const [refreshing, setRefreshing] = useState(false);
@@ -112,19 +120,23 @@ export default function App() {
     setActiveJobs((prev) => [...prev, { jobId, source, type, mountName, customFileName }]);
   }
 
-  function handleBatchCreated(result: { batch_id: string; batch_label: string; jobs: { job_id: string; filename: string }[] }, mountName: string) {
-    setActiveJobs((prev) => [
+  function handleBatchCreated(result: PlaylistConfirmResult, mountName: string) {
+    if (result.jobs.length === 0) return;
+    setActiveBatches((prev) => [
       ...prev,
-      ...result.jobs.map((j) => ({
-        jobId: j.job_id,
-        source: j.filename,
-        type: "url" as const,
-        mountName,
-        customFileName: j.filename,
+      {
         batchId: result.batch_id,
         batchLabel: result.batch_label,
-      })),
+        mountName,
+        jobs: result.jobs,
+        skippedCount: result.skipped?.length ?? 0,
+      },
     ]);
+  }
+
+  function handleBatchDone(batchId: string) {
+    setActiveBatches((prev) => prev.filter((b) => b.batchId !== batchId));
+    loadHistory();
   }
 
   function handleJobDone(jobId: string) {
@@ -155,10 +167,10 @@ export default function App() {
 
       <main className="max-w-2xl mx-auto px-4 py-8 space-y-6">
         {/* Active jobs */}
-        {activeJobs.length > 0 && (
+        {(activeJobs.length > 0 || activeBatches.length > 0) && (
           <section>
             <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">Active Jobs</h2>
-            {activeJobs.filter((j) => !j.batchId).map((j) => (
+            {activeJobs.map((j) => (
               <JobProgress
                 key={j.jobId}
                 token={token}
@@ -170,24 +182,17 @@ export default function App() {
                 onDone={() => handleJobDone(j.jobId)}
               />
             ))}
-            {[...new Set(activeJobs.filter((j) => j.batchId).map((j) => j.batchId))].map((batchId) => (
-              <div key={batchId} className="mt-2">
-                <h3 className="text-xs font-medium text-muted-foreground mb-2">
-                  {activeJobs.find((j) => j.batchId === batchId)?.batchLabel}
-                </h3>
-                {activeJobs.filter((j) => j.batchId === batchId).map((j) => (
-                  <JobProgress
-                    key={j.jobId}
-                    token={token}
-                    jobId={j.jobId}
-                    source={j.source}
-                    type={j.type}
-                    mountName={j.mountName}
-                    customFileName={j.customFileName}
-                    onDone={() => handleJobDone(j.jobId)}
-                  />
-                ))}
-              </div>
+            {activeBatches.map((b) => (
+              <BatchProgress
+                key={b.batchId}
+                token={token}
+                batchId={b.batchId}
+                batchLabel={b.batchLabel}
+                mountName={b.mountName}
+                jobs={b.jobs}
+                skippedCount={b.skippedCount}
+                onDone={() => handleBatchDone(b.batchId)}
+              />
             ))}
           </section>
         )}

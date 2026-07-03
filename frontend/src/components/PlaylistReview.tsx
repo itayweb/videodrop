@@ -19,7 +19,8 @@ interface EntryRow {
   videoUrl: string;
   origTitle: string;
   title: string;
-  episode: string; // keep as text for free editing; validated on confirm
+  season: string;  // keep as text for free editing; validated on confirm
+  episode: string;
   unavailable: boolean;
   translated: boolean;
 }
@@ -40,13 +41,14 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
       videoUrl: e.video_url,
       origTitle: e.orig_title,
       title: e.translated_title,
+      season: e.season_number != null ? String(e.season_number) : "",
       episode: e.episode_number != null ? String(e.episode_number) : "",
       unavailable: e.unavailable,
       translated: e.translated,
     }))
   );
-  const [showName, setShowName] = useState("");
-  const [season, setSeason] = useState(String(preview.suggested_season));
+  const [showName, setShowName] = useState(preview.playlist_title_translated ?? "");
+  const [defaultSeason, setDefaultSeason] = useState(String(preview.suggested_season));
   const [mediaType, setMediaType] = useState<"none" | "tv">("none");
   const [series, setSeries] = useState<SonarrResult | null>(null);
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
@@ -62,24 +64,39 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
     if (s) setShowName(s.title);
   }
 
-  const selectedRows = rows.filter((r) => r.selected);
-  const seasonNum = parseInt(season, 10);
+  // Rows without their own season fall back to the default-season field
+  function effectiveSeason(r: EntryRow): number {
+    const own = parseInt(r.season, 10);
+    if (r.season.trim() && !isNaN(own)) return own;
+    return parseInt(defaultSeason, 10);
+  }
 
-  const duplicateEpisodes = useMemo(() => {
+  const selectedRows = rows.filter((r) => r.selected);
+
+  const duplicateKeys = useMemo(() => {
     const seen = new Map<string, number>();
     for (const r of selectedRows) {
-      if (r.episode.trim()) seen.set(r.episode.trim(), (seen.get(r.episode.trim()) ?? 0) + 1);
+      const s = effectiveSeason(r);
+      const ep = parseInt(r.episode, 10);
+      if (isNaN(s) || isNaN(ep)) continue;
+      const key = `${s}-${ep}`;
+      seen.set(key, (seen.get(key) ?? 0) + 1);
     }
-    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([ep]) => ep));
-  }, [rows]);
+    return new Set([...seen.entries()].filter(([, n]) => n > 1).map(([k]) => k));
+  }, [rows, defaultSeason]);
+
+  function rowKey(r: EntryRow): string {
+    return `${effectiveSeason(r)}-${parseInt(r.episode, 10)}`;
+  }
 
   const problems: string[] = [];
   if (selectedRows.length === 0) problems.push("Select at least one video.");
   if (selectedRows.some((r) => !r.episode.trim() || isNaN(parseInt(r.episode, 10))))
     problems.push("Every selected video needs an episode number.");
-  if (duplicateEpisodes.size > 0) problems.push("Episode numbers must be unique.");
+  if (selectedRows.some((r) => isNaN(effectiveSeason(r)) || effectiveSeason(r) < 0))
+    problems.push("Every selected video needs a season (set it in the row or in Default season).");
+  if (duplicateKeys.size > 0) problems.push("Season + episode pairs must be unique.");
   if (!showName.trim()) problems.push("Show name is required.");
-  if (!season.trim() || isNaN(seasonNum) || seasonNum < 0) problems.push("Season must be a number.");
   if (mediaType === "tv" && !series) problems.push("Select a series for Sonarr import.");
   if (!mount) problems.push("Pick a destination mount.");
 
@@ -87,9 +104,10 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
 
   function filenamePreview(r: EntryRow): string {
     const ep = parseInt(r.episode, 10);
-    if (!showName.trim() || isNaN(ep) || isNaN(seasonNum)) return "";
+    const s = effectiveSeason(r);
+    if (!showName.trim() || isNaN(ep) || isNaN(s)) return "";
     const pad = (n: number) => String(n).padStart(2, "0");
-    return `${showName.trim()} - S${pad(seasonNum)}E${pad(ep)} - ${r.title}.mp4`;
+    return `${showName.trim()} - S${pad(s)}E${pad(ep)} - ${r.title}.mp4`;
   }
 
   async function handleConfirm() {
@@ -100,12 +118,12 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
         mount_name: mount,
         media_type: mediaType,
         show_name: showName.trim(),
-        season: seasonNum,
         series_tvdb_id: series?.tvdbId ?? null,
         series_title: series?.title ?? null,
         series_year: series?.year ?? null,
         entries: selectedRows.map((r) => ({
           video_url: r.videoUrl,
+          season: effectiveSeason(r),
           episode_number: parseInt(r.episode, 10),
           title: r.title.trim(),
         })),
@@ -171,14 +189,14 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
                 disabled={submitting}
               />
             </div>
-            <div className="w-24">
+            <div className="w-32">
               <Input
                 type="number"
                 min={0}
-                placeholder="Season"
-                title="Season number"
-                value={season}
-                onChange={(e) => setSeason(e.target.value)}
+                placeholder="Default season"
+                title="Season used for rows without their own season"
+                value={defaultSeason}
+                onChange={(e) => setDefaultSeason(e.target.value)}
                 disabled={submitting}
               />
             </div>
@@ -203,6 +221,7 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
                     disabled={submitting}
                   />
                 </th>
+                <th className="py-2 pr-2 font-medium w-16">Season</th>
                 <th className="py-2 pr-2 font-medium w-16">Ep #</th>
                 <th className="py-2 pr-2 font-medium">Title (English)</th>
                 <th className="py-2 font-medium">Original</th>
@@ -211,7 +230,8 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
             <tbody>
               {rows.map((r, i) => {
                 const epMissing = r.selected && (!r.episode.trim() || isNaN(parseInt(r.episode, 10)));
-                const epDuplicate = r.selected && duplicateEpisodes.has(r.episode.trim());
+                const seasonMissing = r.selected && isNaN(effectiveSeason(r));
+                const isDuplicate = r.selected && !epMissing && !seasonMissing && duplicateKeys.has(rowKey(r));
                 return (
                   <tr
                     key={i}
@@ -232,16 +252,30 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
                       <Input
                         type="number"
                         min={0}
+                        value={r.season}
+                        placeholder={defaultSeason}
+                        onChange={(e) => updateRow(i, { season: e.target.value })}
+                        disabled={r.unavailable || !r.selected || submitting}
+                        className={cn(
+                          "h-8 w-16 px-2",
+                          (seasonMissing || isDuplicate) && "border-destructive"
+                        )}
+                      />
+                    </td>
+                    <td className="py-2 pr-2">
+                      <Input
+                        type="number"
+                        min={0}
                         value={r.episode}
                         onChange={(e) => updateRow(i, { episode: e.target.value })}
                         disabled={r.unavailable || !r.selected || submitting}
                         className={cn(
                           "h-8 w-16 px-2",
-                          (epMissing || epDuplicate) && "border-destructive"
+                          (epMissing || isDuplicate) && "border-destructive"
                         )}
                       />
-                      {(epMissing || epDuplicate) && (
-                        <span title={epDuplicate ? "Duplicate episode number" : "Episode number required"}>
+                      {(epMissing || seasonMissing || isDuplicate) && (
+                        <span title={isDuplicate ? "Duplicate season + episode" : epMissing ? "Episode number required" : "Season required"}>
                           <AlertTriangle className="h-3.5 w-3.5 text-destructive mt-1" />
                         </span>
                       )}

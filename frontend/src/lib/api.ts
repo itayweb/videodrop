@@ -45,6 +45,7 @@ export interface PlaylistEntry {
   translated_title: string;
   translated: boolean;
   episode_number: number | null;
+  season_number: number | null;
   unavailable: boolean;
 }
 
@@ -59,17 +60,17 @@ export interface PlaylistConfirmPayload {
   mount_name: string;
   media_type: "none" | "tv";
   show_name: string;
-  season: number;
   series_tvdb_id?: number | null;
   series_title?: string | null;
   series_year?: number | null;
-  entries: { video_url: string; episode_number: number; title: string }[];
+  entries: { video_url: string; season: number; episode_number: number; title: string }[];
 }
 
 export interface PlaylistConfirmResult {
   batch_id: string;
   batch_label: string;
   jobs: { job_id: string; filename: string; video_url: string }[];
+  skipped: { video_url: string; filename: string }[];
 }
 
 export async function fetchPlaylistPreview(token: string, url: string): Promise<PlaylistPreview> {
@@ -174,8 +175,8 @@ export async function uploadFile(
   return job_id;
 }
 
-export async function fetchJobs(token: string) {
-  const res = await fetch("/api/jobs", { headers: authHeader(token) });
+export async function fetchJobs(token: string, limit = 100) {
+  const res = await fetch(`/api/jobs?limit=${limit}`, { headers: authHeader(token) });
   if (!res.ok) throw new Error(await res.text());
   return res.json() as Promise<{ active: any[]; history: any[] }>;
 }
