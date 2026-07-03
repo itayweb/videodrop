@@ -129,11 +129,16 @@ async def sonarr_import_episode(cfg: ArrConfig, file_path: str, series_id: int) 
         series_path = r.json()["path"]
 
     src = pathlib.Path(file_path)
-    dest = pathlib.Path(series_path) / src.name
+    dest_dir = pathlib.Path(series_path)
+    dest = dest_dir / src.name
 
     print(f"[sonarr] moving {str(src)!r} → {str(dest)!r}", flush=True)
 
     # ── 2. Move the file (blocking but near-instant on same filesystem) ────────
+    # Adding a series to Sonarr doesn't create its on-disk folder (default
+    # "create empty series folders" is off), so shutil.move would fail with
+    # ENOENT on the missing parent — create it first.
+    await asyncio.to_thread(lambda: dest_dir.mkdir(parents=True, exist_ok=True))
     await asyncio.to_thread(shutil.move, str(src), str(dest))
 
     print(f"[sonarr] move done — queuing RescanSeries (seriesId={series_id})", flush=True)
