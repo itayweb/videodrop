@@ -33,6 +33,8 @@ export function BatchProgress({ token, batchId, batchLabel, mountName, jobs, ski
   const [expanded, setExpanded] = useState(false);
   const [cancelling, setCancelling] = useState(false);
   const doneRef = useRef(false);
+  const onDoneRef = useRef(onDone);
+  onDoneRef.current = onDone;
 
   useEffect(() => {
     let stopped = false;
@@ -68,11 +70,13 @@ export function BatchProgress({ token, batchId, batchLabel, mountName, jobs, ski
       stopped = true;
       clearInterval(iv);
     };
-  }, [token, batchId, jobs.length]);
+  }, [token, batchId]);
 
+  // Backend only reports "queued"/"running" for active jobs and
+  // "done"/"failed"/"cancelled" for history rows
   const counts = {
     queued: states.filter((s) => s.status === "queued").length,
-    running: states.filter((s) => !["queued", "done", "failed", "cancelled"].includes(s.status)).length,
+    running: states.filter((s) => s.status === "running").length,
     done: states.filter((s) => s.status === "done").length,
     failed: states.filter((s) => s.status === "failed").length,
     cancelled: states.filter((s) => s.status === "cancelled").length,
@@ -82,15 +86,13 @@ export function BatchProgress({ token, batchId, batchLabel, mountName, jobs, ski
   const allFinished = total > 0 && finished === total;
 
   useEffect(() => {
-    if (allFinished && !doneRef.current) {
-      doneRef.current = true;
-      setTimeout(() => onDone(), 4000);
-    }
+    if (!allFinished || doneRef.current) return;
+    doneRef.current = true;
+    const t = setTimeout(() => onDoneRef.current(), 4000);
+    return () => clearTimeout(t);
   }, [allFinished]);
 
-  const runningJobs = states.filter(
-    (s) => !["queued", "done", "failed", "cancelled"].includes(s.status)
-  );
+  const runningJobs = states.filter((s) => s.status === "running");
 
   async function cancelRemaining() {
     setCancelling(true);
