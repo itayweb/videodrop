@@ -77,6 +77,26 @@ async def sonarr_get_series_id(cfg: ArrConfig, tvdb_id: int) -> int | None:
     return None
 
 
+async def sonarr_episodes_with_files(cfg: ArrConfig, series_id: int) -> set[tuple[int, int]]:
+    """Return {(season, episode)} for episodes Sonarr already has a file for.
+
+    Source of truth for "already imported": Sonarr moves+renames files into its
+    own library on import, so checking the download mount misses them.
+    """
+    async with httpx.AsyncClient(timeout=15) as client:
+        r = await client.get(
+            f"{cfg.url.rstrip('/')}/api/v3/episode",
+            params={"seriesId": series_id},
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+    return {
+        (e["seasonNumber"], e["episodeNumber"])
+        for e in r.json()
+        if e.get("hasFile")
+    }
+
+
 async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int) -> int:
     """Add a series to Sonarr (creates its folder). Returns the Sonarr series id."""
     existing_id = await sonarr_get_series_id(cfg, tvdb_id)
