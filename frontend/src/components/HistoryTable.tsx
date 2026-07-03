@@ -10,6 +10,7 @@ interface Job {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+  batch_label: string | null;
 }
 
 interface Props {
@@ -53,6 +54,9 @@ export function HistoryTable({ jobs }: Props) {
               <tr key={job.id} className="border-b border-border/50 hover:bg-accent/30 transition-colors">
                 <td className="py-2 pr-4 max-w-xs">
                   <span title={job.source} className="truncate block">{short}</span>
+                  {job.batch_label && (
+                    <Badge variant="secondary" className="text-[10px] px-1 py-0 mt-0.5">{job.batch_label}</Badge>
+                  )}
                   {job.error && <span className="text-xs text-destructive block">{job.error}</span>}
                 </td>
                 <td className="py-2 pr-4 whitespace-nowrap">{job.dest_mount}</td>

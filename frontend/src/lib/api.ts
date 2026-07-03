@@ -37,6 +37,67 @@ export async function submitUrl(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+export interface PlaylistEntry {
+  index: number;
+  video_id: string;
+  video_url: string;
+  orig_title: string;
+  translated_title: string;
+  translated: boolean;
+  episode_number: number | null;
+  unavailable: boolean;
+}
+
+export interface PlaylistPreview {
+  playlist_title: string;
+  playlist_title_translated: string;
+  suggested_season: number;
+  entries: PlaylistEntry[];
+}
+
+export interface PlaylistConfirmPayload {
+  mount_name: string;
+  media_type: "none" | "tv";
+  show_name: string;
+  season: number;
+  series_tvdb_id?: number | null;
+  series_title?: string | null;
+  series_year?: number | null;
+  entries: { video_url: string; episode_number: number; title: string }[];
+}
+
+export interface PlaylistConfirmResult {
+  batch_id: string;
+  batch_label: string;
+  jobs: { job_id: string; filename: string; video_url: string }[];
+}
+
+export async function fetchPlaylistPreview(token: string, url: string): Promise<PlaylistPreview> {
+  const res = await fetch("/api/playlist/preview", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ url }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
+export async function confirmPlaylist(token: string, payload: PlaylistConfirmPayload): Promise<PlaylistConfirmResult> {
+  const res = await fetch("/api/playlist/confirm", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
 export async function searchSonarr(token: string, q: string) {
   const res = await fetch(`/api/sonarr/search?q=${encodeURIComponent(q)}`, {
     headers: authHeader(token),

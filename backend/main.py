@@ -188,6 +188,85 @@ async def submit_url_job(req: UrlJobRequest, _: bool = Depends(require_auth)):
     return {"job_id": job_id}
 
 
+# ── YouTube playlist ───────────────────────────────────────────────────────────
+
+class PlaylistPreviewRequest(BaseModel):
+    url: str
+
+
+class PlaylistConfirmEntry(BaseModel):
+    video_url: str
+    episode_number: int
+    title: str
+
+
+class PlaylistConfirmRequest(BaseModel):
+    mount_name: str
+    media_type: str = "none"          # "none" | "tv"
+    show_name: str
+    season: int = 1
+    series_tvdb_id: int | None = None
+    series_title: str | None = None
+    series_year: int | None = None
+    entries: list[PlaylistConfirmEntry]
+
+
+@app.post("/api/playlist/preview")
+async def playlist_preview(req: PlaylistPreviewRequest, _: bool = Depends(require_auth)):
+    from .playlist import build_preview
+    try:
+        return await asyncio.wait_for(build_preview(req.url), timeout=90)
+    except asyncio.TimeoutError:
+        raise HTTPException(504, "Playlist metadata fetch timed out")
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    except Exception as e:
+        raise HTTPException(400, f"Could not read playlist: {e}")
+
+
+@app.post("/api/playlist/confirm", status_code=status.HTTP_202_ACCEPTED)
+async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(require_auth)):
+    from .playlist import build_episode_filename, build_subpath, sanitize_filename
+
+    cfg = get_config()
+    mount = next((m for m in cfg.mounts if m.name == req.mount_name), None)
+    if mount is None:
+        raise HTTPException(400, f"Unknown mount: {req.mount_name}")
+    if not req.entries:
+        raise HTTPException(400, "No entries selected")
+    show_name = req.show_name.strip()
+    if not show_name:
+        raise HTTPException(400, "Show name is required")
+    episodes = [e.episode_number for e in req.entries]
+    if len(episodes) != len(set(episodes)):
+        raise HTTPException(400, "Duplicate episode numbers")
+
+    batch_id = new_job_id()
+    batch_label = f"{show_name} — Season {req.season:02d}"
+    subpath = build_subpath(show_name, req.season)
+
+    jobs = []
+    for entry in sorted(req.entries, key=lambda e: e.episode_number):
+        fname = sanitize_filename(
+            build_episode_filename(show_name, req.season, entry.episode_number, entry.title)
+        )
+        job_id = new_job_id()
+        await enqueue_url_job(
+            job_id, entry.video_url, mount.path, mount.name,
+            filename=fname,
+            media_type=req.media_type,
+            series_tvdb_id=req.series_tvdb_id,
+            series_title=req.series_title,
+            series_year=req.series_year,
+            dest_subpath=subpath,
+            batch_id=batch_id,
+            batch_label=batch_label,
+        )
+        jobs.append({"job_id": job_id, "filename": fname, "video_url": entry.video_url})
+
+    return {"batch_id": batch_id, "batch_label": batch_label, "jobs": jobs}
+
+
 # ── Sonarr search ──────────────────────────────────────────────────────────────
 
 @app.get("/api/sonarr/search")

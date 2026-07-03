@@ -22,6 +22,8 @@ interface ActiveJob {
   type: "url" | "upload";
   mountName: string;
   customFileName?: string;
+  batchId?: string;
+  batchLabel?: string;
 }
 
 interface HistoryJob {
@@ -34,6 +36,7 @@ interface HistoryJob {
   error: string | null;
   created_at: string;
   finished_at: string | null;
+  batch_label: string | null;
 }
 
 function LoginScreen({ onLogin }: { onLogin: (token: string) => void }) {
@@ -109,6 +112,21 @@ export default function App() {
     setActiveJobs((prev) => [...prev, { jobId, source, type, mountName, customFileName }]);
   }
 
+  function handleBatchCreated(result: { batch_id: string; batch_label: string; jobs: { job_id: string; filename: string }[] }, mountName: string) {
+    setActiveJobs((prev) => [
+      ...prev,
+      ...result.jobs.map((j) => ({
+        jobId: j.job_id,
+        source: j.filename,
+        type: "url" as const,
+        mountName,
+        customFileName: j.filename,
+        batchId: result.batch_id,
+        batchLabel: result.batch_label,
+      })),
+    ]);
+  }
+
   function handleJobDone(jobId: string) {
     setActiveJobs((prev) => prev.filter((j) => j.jobId !== jobId));
     loadHistory();
@@ -140,7 +158,7 @@ export default function App() {
         {activeJobs.length > 0 && (
           <section>
             <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">Active Jobs</h2>
-            {activeJobs.map((j) => (
+            {activeJobs.filter((j) => !j.batchId).map((j) => (
               <JobProgress
                 key={j.jobId}
                 token={token}
@@ -151,6 +169,25 @@ export default function App() {
                 customFileName={j.customFileName}
                 onDone={() => handleJobDone(j.jobId)}
               />
+            ))}
+            {[...new Set(activeJobs.filter((j) => j.batchId).map((j) => j.batchId))].map((batchId) => (
+              <div key={batchId} className="mt-2">
+                <h3 className="text-xs font-medium text-muted-foreground mb-2">
+                  {activeJobs.find((j) => j.batchId === batchId)?.batchLabel}
+                </h3>
+                {activeJobs.filter((j) => j.batchId === batchId).map((j) => (
+                  <JobProgress
+                    key={j.jobId}
+                    token={token}
+                    jobId={j.jobId}
+                    source={j.source}
+                    type={j.type}
+                    mountName={j.mountName}
+                    customFileName={j.customFileName}
+                    onDone={() => handleJobDone(j.jobId)}
+                  />
+                ))}
+              </div>
             ))}
           </section>
         )}
@@ -176,11 +213,12 @@ export default function App() {
 
           <Tabs.Content value="new" className="space-y-8">
             <section>
-              <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">Telegram / URL</h2>
+              <h2 className="text-sm font-medium text-muted-foreground mb-3 uppercase tracking-wide">Download from URL</h2>
               <UrlForm
                 token={token}
                 mounts={mounts}
                 onJobCreated={(id, src, mount, customFileName) => handleJobCreated(id, src, mount, "url", customFileName)}
+                onBatchCreated={handleBatchCreated}
               />
             </section>
             <div className="border-t border-border" />

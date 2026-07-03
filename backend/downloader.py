@@ -61,10 +61,21 @@ async def download_url(job_id: str, url: str, dest_dir: str, filename: str | Non
     dest_path = Path(dest_dir)
     dest_path.mkdir(parents=True, exist_ok=True)
 
+    # filename arrives pre-sanitized and without extension (batch jobs
+    # pre-compute exact episode names); default to the video's own title
+    if filename:
+        expected = dest_path / f"{filename}.mp4"
+        if expected.exists():
+            raise FileExistsError(f"File already exists: {expected}")
+        outtmpl = str(dest_path / f"{filename}.%(ext)s")
+    else:
+        outtmpl = str(dest_path / "%(title)s.%(ext)s")
+
     ydl_opts = {
         "format": "bestvideo+bestaudio/best",
         "merge_output_format": "mp4",
-        "outtmpl": str(dest_path / "%(title)s.%(ext)s"),
+        "outtmpl": outtmpl,
+        "noplaylist": True,
         "progress_hooks": [_make_progress_hook(job_id, loop)],
         "quiet": True,
         "no_warnings": True,
@@ -79,5 +90,5 @@ async def download_url(job_id: str, url: str, dest_dir: str, filename: str | Non
             info = ydl.extract_info(url, download=True)
             return ydl.prepare_filename(info).replace(".webm", ".mp4").replace(".mkv", ".mp4")
 
-    filename = await asyncio.get_event_loop().run_in_executor(None, _run)
-    return Path(filename)
+    out_file = await asyncio.get_event_loop().run_in_executor(None, _run)
+    return Path(out_file)

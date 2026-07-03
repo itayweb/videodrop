@@ -15,7 +15,9 @@ CREATE TABLE IF NOT EXISTS jobs (
     status TEXT NOT NULL DEFAULT 'queued',
     error TEXT,
     created_at TEXT NOT NULL,
-    finished_at TEXT
+    finished_at TEXT,
+    batch_id TEXT,
+    batch_label TEXT
 );
 """
 
@@ -35,15 +37,28 @@ async def init_db():
         # covers all future connections
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(CREATE_SQL)
+        # Pre-existing DBs were created without the batch columns
+        async with db.execute("PRAGMA table_info(jobs)") as cursor:
+            cols = {row[1] for row in await cursor.fetchall()}
+        for col in ("batch_id", "batch_label"):
+            if col not in cols:
+                await db.execute(f"ALTER TABLE jobs ADD COLUMN {col} TEXT")
         await db.commit()
 
 
-async def insert_job(job_id: str, job_type: str, source: str, dest_mount: str):
+async def insert_job(
+    job_id: str,
+    job_type: str,
+    source: str,
+    dest_mount: str,
+    batch_id: str | None = None,
+    batch_label: str | None = None,
+):
     now = datetime.now(timezone.utc).isoformat()
     async with _connect() as db:
         await db.execute(
-            "INSERT INTO jobs (id, type, source, dest_mount, status, created_at) VALUES (?,?,?,?,?,?)",
-            (job_id, job_type, source, dest_mount, "queued", now),
+            "INSERT INTO jobs (id, type, source, dest_mount, status, created_at, batch_id, batch_label) VALUES (?,?,?,?,?,?,?,?)",
+            (job_id, job_type, source, dest_mount, "queued", now, batch_id, batch_label),
         )
         await db.commit()
 
