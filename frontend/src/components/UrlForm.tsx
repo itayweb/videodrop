@@ -47,6 +47,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   const [selectedSeries, setSelectedSeries] = useState<SonarrResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+  const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<PlaylistPreview | null>(null);
 
   // Arr availability
@@ -66,6 +67,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     e.preventDefault();
     if (!url.trim()) return;
     setError("");
+    setNotice("");
 
     if (isPlaylist) {
       setLoading(true);
@@ -113,6 +115,14 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     setPreview(null);
     setUrl("");
     setPlaylistMode(false);
+    const skipped = result.skipped?.length ?? 0;
+    if (result.jobs.length === 0) {
+      setNotice(`Nothing to download — all ${skipped} episodes already on disk.`);
+    } else if (skipped > 0) {
+      setNotice(`${result.jobs.length} queued, ${skipped} skipped (already on disk).`);
+    } else {
+      setNotice("");
+    }
     onBatchCreated(result, mountName);
   }
 
@@ -236,6 +246,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
       </div>
 
       {error && <p className="text-xs text-destructive">{error}</p>}
+      {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
 
       {preview && (
         <PlaylistReview

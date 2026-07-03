@@ -196,6 +196,7 @@ class PlaylistPreviewRequest(BaseModel):
 
 class PlaylistConfirmEntry(BaseModel):
     video_url: str
+    season: int
     episode_number: int
     title: str
 
@@ -204,7 +205,6 @@ class PlaylistConfirmRequest(BaseModel):
     mount_name: str
     media_type: str = "none"          # "none" | "tv"
     show_name: str
-    season: int = 1
     series_tvdb_id: int | None = None
     series_title: str | None = None
     series_year: int | None = None
@@ -215,7 +215,7 @@ class PlaylistConfirmRequest(BaseModel):
 async def playlist_preview(req: PlaylistPreviewRequest, _: bool = Depends(require_auth)):
     from .playlist import build_preview
     try:
-        return await asyncio.wait_for(build_preview(req.url), timeout=90)
+        return await asyncio.wait_for(build_preview(req.url), timeout=180)
     except asyncio.TimeoutError:
         raise HTTPException(504, "Playlist metadata fetch timed out")
     except ValueError as e:
@@ -237,19 +237,32 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
     show_name = req.show_name.strip()
     if not show_name:
         raise HTTPException(400, "Show name is required")
-    episodes = [e.episode_number for e in req.entries]
-    if len(episodes) != len(set(episodes)):
-        raise HTTPException(400, "Duplicate episode numbers")
+    seen: set[tuple[int, int]] = set()
+    for e in req.entries:
+        key = (e.season, e.episode_number)
+        if key in seen:
+            raise HTTPException(400, f"Duplicate episode: S{e.season:02d}E{e.episode_number:02d}")
+        seen.add(key)
 
+    seasons = sorted({e.season for e in req.entries})
     batch_id = new_job_id()
-    batch_label = f"{show_name} — Season {req.season:02d}"
-    subpath = build_subpath(show_name, req.season)
+    if len(seasons) == 1:
+        batch_label = f"{show_name} — Season {seasons[0]:02d}"
+    else:
+        batch_label = f"{show_name} — S{seasons[0]:02d}–S{seasons[-1]:02d}"
 
     jobs = []
-    for entry in sorted(req.entries, key=lambda e: e.episode_number):
+    skipped = []
+    for entry in sorted(req.entries, key=lambda e: (e.season, e.episode_number)):
+        subpath = build_subpath(show_name, entry.season)
         fname = sanitize_filename(
-            build_episode_filename(show_name, req.season, entry.episode_number, entry.title)
+            build_episode_filename(show_name, entry.season, entry.episode_number, entry.title)
         )
+        # Already on disk → skip silently so re-running a playlist resumes
+        # missing episodes instead of failing the whole batch
+        if (Path(mount.path) / subpath / f"{fname}.mp4").exists():
+            skipped.append({"video_url": entry.video_url, "filename": fname})
+            continue
         job_id = new_job_id()
         await enqueue_url_job(
             job_id, entry.video_url, mount.path, mount.name,
@@ -264,7 +277,7 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
         )
         jobs.append({"job_id": job_id, "filename": fname, "video_url": entry.video_url})
 
-    return {"batch_id": batch_id, "batch_label": batch_label, "jobs": jobs}
+    return {"batch_id": batch_id, "batch_label": batch_label, "jobs": jobs, "skipped": skipped}
 
 
 # ── Sonarr search ──────────────────────────────────────────────────────────────
@@ -322,8 +335,8 @@ async def upload_chunk(
 # ── Job status ─────────────────────────────────────────────────────────────────
 
 @app.get("/api/jobs")
-async def list_jobs(_: bool = Depends(require_auth)):
-    history = await get_jobs()
+async def list_jobs(limit: int = Query(100, ge=1, le=1000), _: bool = Depends(require_auth)):
+    history = await get_jobs(limit)
     active = get_active_jobs()
     return {"active": active, "history": history}
 
