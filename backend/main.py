@@ -251,6 +251,19 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
     else:
         batch_label = f"{show_name} — S{seasons[0]:02d}–S{seasons[-1]:02d}"
 
+    # For Sonarr imports the file is moved+renamed into the library, so the
+    # download mount is empty on a re-run — ask Sonarr which (season, episode)
+    # pairs already have a file and skip those to avoid re-downloading.
+    imported: set[tuple[int, int]] = set()
+    if req.media_type == "tv" and cfg.sonarr and req.series_tvdb_id:
+        from .arr_client import sonarr_get_series_id, sonarr_episodes_with_files
+        try:
+            series_id = await sonarr_get_series_id(cfg.sonarr, req.series_tvdb_id)
+            if series_id:
+                imported = await sonarr_episodes_with_files(cfg.sonarr, series_id)
+        except Exception:
+            imported = set()  # Sonarr unreachable → fall back to mount check only
+
     jobs = []
     skipped = []
     for entry in sorted(req.entries, key=lambda e: (e.season, e.episode_number)):
@@ -258,9 +271,11 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
         fname = sanitize_filename(
             build_episode_filename(show_name, entry.season, entry.episode_number, entry.title)
         )
-        # Already on disk → skip silently so re-running a playlist resumes
-        # missing episodes instead of failing the whole batch
-        if (Path(mount.path) / subpath / f"{fname}.mp4").exists():
+        # Skip if already imported into Sonarr, or still sitting in the download
+        # mount (e.g. an earlier import that hasn't run yet) — either way,
+        # re-running the playlist resumes only the missing episodes.
+        already = (entry.season, entry.episode_number) in imported
+        if already or (Path(mount.path) / subpath / f"{fname}.mp4").exists():
             skipped.append({"video_url": entry.video_url, "filename": fname})
             continue
         job_id = new_job_id()
