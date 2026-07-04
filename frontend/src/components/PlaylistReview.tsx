@@ -143,6 +143,11 @@ export function PlaylistReview({ token, preview, mounts, sonarrAvailable, onCanc
           <div className="min-w-0">
             <h2 className="text-base font-semibold truncate">{preview.playlist_title_translated}</h2>
             <p className="text-xs text-muted-foreground truncate" dir="rtl">{preview.playlist_title}</p>
+            {preview.truncated && (
+              <p className="text-xs text-amber-600 dark:text-amber-500 mt-0.5">
+                Showing first {preview.entries.length} videos — playlist may contain more.
+              </p>
+            )}
           </div>
           <Button variant="ghost" size="sm" onClick={onCancel} disabled={submitting}>
             <X className="h-4 w-4" />

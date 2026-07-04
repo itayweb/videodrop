@@ -1,0 +1,12 @@
+[Unit]
+Description=VideoDrop — update yt-dlp to latest nightly
+Documentation=https://github.com/yt-dlp/yt-dlp#update-channels
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=oneshot
+# Stable yt-dlp lags YouTube; nightly keeps playlist pagination working.
+ExecStart=/opt/videodrop/venv/bin/pip install --quiet -U --pre yt-dlp[default]
+# Reload the extractor by bouncing the app (running process holds the old yt-dlp)
+ExecStartPost=/usr/bin/systemctl restart videodrop

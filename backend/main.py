@@ -215,7 +215,7 @@ class PlaylistConfirmRequest(BaseModel):
 async def playlist_preview(req: PlaylistPreviewRequest, _: bool = Depends(require_auth)):
     from .playlist import build_preview
     try:
-        return await asyncio.wait_for(build_preview(req.url), timeout=180)
+        return await asyncio.wait_for(build_preview(req.url), timeout=300)
     except asyncio.TimeoutError:
         raise HTTPException(504, "Playlist metadata fetch timed out")
     except ValueError as e:

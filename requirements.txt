@@ -1,6 +1,9 @@
 fastapi==0.115.0
 uvicorn[standard]==0.30.6
-yt-dlp==2026.6.9
+# yt-dlp: NOT pinned. YouTube breaks stable's extractor regularly (stable 2026.6.9
+# stopped paginating playlists past 100). install.sh installs the nightly channel
+# (pip -U --pre "yt-dlp[default]") and a weekly systemd timer keeps it current.
+yt-dlp
 deep-translator==1.11.4
 aiosqlite==0.20.0
 python-multipart==0.0.12
