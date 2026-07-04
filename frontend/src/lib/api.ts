@@ -54,6 +54,7 @@ export interface PlaylistPreview {
   playlist_title_translated: string;
   suggested_season: number;
   entries: PlaylistEntry[];
+  truncated: boolean;
 }
 
 export interface PlaylistConfirmPayload {

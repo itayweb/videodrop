@@ -1,0 +1,12 @@
+[Unit]
+Description=VideoDrop — weekly yt-dlp update
+
+[Timer]
+OnCalendar=weekly
+# Catch up if the box was off when the timer was due
+Persistent=true
+# Spread load / avoid hammering PyPI at the exact same second
+RandomizedDelaySec=1h
+
+[Install]
+WantedBy=timers.target

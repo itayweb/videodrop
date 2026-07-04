@@ -15,17 +15,23 @@ echo "==> Installing Python dependencies"
 python3 -m venv "$INSTALL_DIR/venv"
 "$INSTALL_DIR/venv/bin/pip" install --quiet -r "$INSTALL_DIR/requirements.txt"
 
+echo "==> Installing yt-dlp nightly (stable lags YouTube's playlist changes)"
+"$INSTALL_DIR/venv/bin/pip" install --quiet -U --pre "yt-dlp[default]"
+
 echo "==> Building frontend"
 cd "$INSTALL_DIR/frontend"
 npm ci --silent
 npm run build
 
-echo "==> Installing systemd service"
+echo "==> Installing systemd service + weekly yt-dlp updater"
 cp "$INSTALL_DIR/systemd/videodrop.service" /etc/systemd/system/videodrop.service
+cp "$INSTALL_DIR/systemd/videodrop-ytdlp-update.service" /etc/systemd/system/videodrop-ytdlp-update.service
+cp "$INSTALL_DIR/systemd/videodrop-ytdlp-update.timer" /etc/systemd/system/videodrop-ytdlp-update.timer
 chown -R "$SERVICE_USER:$SERVICE_USER" "$INSTALL_DIR"
 systemctl daemon-reload
 systemctl enable videodrop
 systemctl restart videodrop
+systemctl enable --now videodrop-ytdlp-update.timer
 
 echo ""
 echo "Done! VideoDrop is running on http://0.0.0.0:8080"

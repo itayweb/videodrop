@@ -7,7 +7,8 @@ from urllib.parse import urlparse, parse_qs
 
 import yt_dlp
 
-MAX_PLAYLIST_ENTRIES = 300
+MAX_PLAYLIST_ENTRIES = 500
+_TRANSLATE_WORKERS = 8
 
 _HEBREW_RE = re.compile("[\\u0590-\\u05FF]")
 # RTL/LTR embedding marks that sneak into YouTube titles and break regexes
@@ -121,26 +122,38 @@ def _fetch_flat(url: str) -> dict:
     entries = [e for e in (info.get("entries") or [])]
     if not entries:
         raise ValueError("Playlist is empty or could not be read.")
-    return {"title": info.get("title") or "", "entries": entries}
+    # playlistend stops yt-dlp at the cap; hitting it exactly means the real
+    # playlist is at least this long and was truncated
+    truncated = len(entries) >= MAX_PLAYLIST_ENTRIES
+    return {"title": info.get("title") or "", "entries": entries, "truncated": truncated}
+
+
+def _translate_one(text: str) -> tuple[str, bool]:
+    """Translate a single Hebrew title; keep the original on any failure.
+    A fresh translator per call keeps threads independent (no shared state)."""
+    from deep_translator import GoogleTranslator
+
+    try:
+        translated = GoogleTranslator(source="auto", target="en").translate(text)
+        if translated:
+            translated = translated[:1].upper() + translated[1:]
+        return (translated or text, bool(translated))
+    except Exception:
+        return (text, False)
 
 
 def _translate_all(texts: list[str]) -> list[tuple[str, bool]]:
-    """Hebrew→English per title; on any failure keep the original and flag it."""
-    from deep_translator import GoogleTranslator
+    """Hebrew→English per title, translated in parallel; non-Hebrew titles pass
+    through untouched. Bounded workers keep the free endpoint from rate-limiting;
+    any per-title failure falls back to the original (flagged untranslated)."""
+    from concurrent.futures import ThreadPoolExecutor
 
-    translator = GoogleTranslator(source="auto", target="en")
-    results: list[tuple[str, bool]] = []
-    for text in texts:
-        if not text or not _HEBREW_RE.search(text):
-            results.append((text, True))
-            continue
-        try:
-            translated = translator.translate(text)
-            if translated:
-                translated = translated[:1].upper() + translated[1:]
-            results.append((translated or text, bool(translated)))
-        except Exception:
-            results.append((text, False))
+    results: list[tuple[str, bool]] = [(t, True) for t in texts]
+    todo = [i for i, t in enumerate(texts) if t and _HEBREW_RE.search(t)]
+    if todo:
+        with ThreadPoolExecutor(max_workers=_TRANSLATE_WORKERS) as pool:
+            for i, res in zip(todo, pool.map(lambda idx: _translate_one(texts[idx]), todo)):
+                results[i] = res
     return results
 
 
@@ -183,4 +196,5 @@ async def build_preview(url: str) -> dict:
         "playlist_title_translated": playlist_title_translated,
         "suggested_season": parse_season_number(meta["title"]) or 1,
         "entries": entries,
+        "truncated": meta.get("truncated", False),
     }
