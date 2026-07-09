@@ -133,6 +133,16 @@ export function SettingsForm({ token, onPasswordChanged }: Props) {
         />
       </Field>
 
+      <Field label="Max channel entries">
+        <Input
+          type="number"
+          min={1}
+          max={2000}
+          value={cfg.max_channel_entries}
+          onChange={(e) => update({ max_channel_entries: parseInt(e.target.value) || 500 })}
+        />
+      </Field>
+
       {/* Mounts */}
       <SectionTitle>Mounts</SectionTitle>
 

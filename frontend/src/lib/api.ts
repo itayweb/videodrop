@@ -100,6 +100,83 @@ export async function confirmPlaylist(token: string, payload: PlaylistConfirmPay
   return res.json();
 }
 
+export interface TelegramChannelEntry {
+  msg_id: number;
+  date: string;
+  orig_caption: string;
+  translated_caption: string;
+  translated: boolean;
+  duration: number | null;
+  file_size: number | null;
+  episode_number: number | null;
+  season_number: number | null;
+  already_downloaded: boolean;
+}
+
+export interface TelegramChannelPreview {
+  channel_title: string;
+  channel_title_translated: string;
+  channel_username: string | null;
+  channel_id: number;
+  suggested_season: number;
+  entries: TelegramChannelEntry[];
+  truncated: boolean;
+}
+
+export interface TelegramChannelConfirmPayload {
+  chat: string;
+  mount_name: string;
+  dest_mode: "episodes" | "raw";
+  media_type: "none" | "tv";
+  show_name?: string | null;
+  series_tvdb_id?: number | null;
+  series_title?: string | null;
+  series_year?: number | null;
+  entries: {
+    msg_id: number;
+    date: string;
+    season?: number | null;
+    episode_number?: number | null;
+    title: string;
+  }[];
+}
+
+export interface TelegramChannelConfirmResult {
+  batch_id: string;
+  batch_label: string;
+  jobs: { job_id: string; filename: string; msg_id: number }[];
+  skipped: { msg_id: number; filename: string }[];
+}
+
+export async function fetchTelegramChannelPreview(token: string, chat: string): Promise<TelegramChannelPreview> {
+  const res = await fetch("/api/telegram/channel/preview", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ chat }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
+export async function confirmTelegramChannel(
+  token: string,
+  payload: TelegramChannelConfirmPayload
+): Promise<TelegramChannelConfirmResult> {
+  const res = await fetch("/api/telegram/channel/confirm", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
 export async function searchSonarr(token: string, q: string) {
   const res = await fetch(`/api/sonarr/search?q=${encodeURIComponent(q)}`, {
     headers: authHeader(token),
@@ -186,6 +263,7 @@ export interface FullConfig {
   password: string;
   mounts: { name: string; path: string }[];
   max_concurrent_jobs: number;
+  max_channel_entries: number;
   telegram: {
     api_id: number | null;
     api_hash: string | null;

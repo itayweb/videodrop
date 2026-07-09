@@ -32,6 +32,7 @@ class Config:
     password: str
     mounts: list[Mount]
     max_concurrent_jobs: int = 2
+    max_channel_entries: int = 500
     telegram: Optional[TelegramConfig] = None
     sonarr: Optional[ArrConfig] = None
     radarr: Optional[ArrConfig] = None
@@ -55,6 +56,7 @@ def load_config() -> Config:
         password=data["password"],
         mounts=[Mount(**m) for m in data["mounts"]],
         max_concurrent_jobs=data.get("max_concurrent_jobs", 2),
+        max_channel_entries=data.get("max_channel_entries", 500),
         telegram=tg,
         sonarr=ArrConfig(**sonarr_data) if sonarr_data else None,
         radarr=ArrConfig(**radarr_data) if radarr_data else None,
@@ -94,6 +96,7 @@ def save_config(cfg: Config) -> None:
         "password": cfg.password,
         "mounts": [{"name": m.name, "path": m.path} for m in cfg.mounts],
         "max_concurrent_jobs": cfg.max_concurrent_jobs,
+        "max_channel_entries": cfg.max_channel_entries,
     }
     if cfg.telegram:
         data["telegram"] = _tg(cfg.telegram)

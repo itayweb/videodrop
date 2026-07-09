@@ -21,6 +21,16 @@ CREATE TABLE IF NOT EXISTS jobs (
 );
 """
 
+CREATE_TELEGRAM_SEEN_SQL = """
+CREATE TABLE IF NOT EXISTS telegram_seen (
+    channel_id INTEGER NOT NULL,
+    msg_id INTEGER NOT NULL,
+    dest_path TEXT,
+    created_at TEXT NOT NULL,
+    PRIMARY KEY (channel_id, msg_id)
+);
+"""
+
 
 @asynccontextmanager
 async def _connect():
@@ -37,6 +47,7 @@ async def init_db():
         # covers all future connections
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(CREATE_SQL)
+        await db.execute(CREATE_TELEGRAM_SEEN_SQL)
         # Pre-existing DBs were created without the batch columns
         async with db.execute("PRAGMA table_info(jobs)") as cursor:
             cols = {row[1] for row in await cursor.fetchall()}
@@ -89,3 +100,26 @@ async def get_job(job_id: str) -> dict | None:
         async with db.execute("SELECT * FROM jobs WHERE id=?", (job_id,)) as cursor:
             row = await cursor.fetchone()
     return dict(row) if row else None
+
+
+async def mark_telegram_seen(channel_id: int, msg_id: int, dest_path: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    async with _connect() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO telegram_seen (channel_id, msg_id, dest_path, created_at) VALUES (?,?,?,?)",
+            (channel_id, msg_id, dest_path, now),
+        )
+        await db.commit()
+
+
+async def get_telegram_seen(channel_id: int, msg_ids: list[int]) -> set[int]:
+    if not msg_ids:
+        return set()
+    placeholders = ",".join("?" * len(msg_ids))
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT msg_id FROM telegram_seen WHERE channel_id=? AND msg_id IN ({placeholders})",
+            (channel_id, *msg_ids),
+        ) as cursor:
+            rows = await cursor.fetchall()
+    return {r[0] for r in rows}

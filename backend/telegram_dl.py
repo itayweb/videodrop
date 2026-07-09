@@ -5,7 +5,7 @@ from pathlib import Path
 
 from . import ws_hub
 from .config import get_config
-from .db import update_job_status
+from .db import update_job_status, mark_telegram_seen
 
 BASE_DIR = Path(__file__).parent.parent
 
@@ -50,6 +50,57 @@ async def close_client():
         if _client is not None:
             await _client.disconnect()
             _client = None
+
+
+def _parse_chat_input(chat_input: str) -> tuple[str, str | None]:
+    """Classify a pasted channel/group reference.
+
+    Returns (kind, value):
+      ("username", "somechannel")   — @name, t.me/name, or bare name
+      ("invite", "AbCdEf")          — t.me/joinchat/<hash> or t.me/+<hash>
+    """
+    s = chat_input.strip()
+    m = re.match(r"https?://t\.me/(?:joinchat/|\+)([^/?]+)", s)
+    if m:
+        return "invite", m.group(1)
+    m = re.match(r"https?://t\.me/([^/?]+)", s)
+    if m:
+        return "username", m.group(1)
+    return "username", s.lstrip("@")
+
+
+async def resolve_channel(chat_input: str):
+    """Resolve a pasted channel/group reference to (entity, username, marked_channel_id).
+
+    Public channels resolve directly by username. Private chats can only be
+    resolved via an invite link if the Telethon account has already joined —
+    there is no auto-join; joining is a visible action left to the user.
+    """
+    from telethon.tl.functions.messages import CheckChatInviteRequest
+    from telethon.tl.types import ChatInviteAlready, ChatInvitePeek
+    from telethon import utils
+
+    client = await _get_client()
+    kind, value = _parse_chat_input(chat_input)
+
+    if kind == "invite":
+        result = await client(CheckChatInviteRequest(value))
+        if isinstance(result, (ChatInviteAlready, ChatInvitePeek)):
+            entity = result.chat
+        else:
+            raise ValueError(
+                "Not a member of this chat — join it with the configured "
+                "Telegram account first, then retry."
+            )
+    else:
+        try:
+            entity = await client.get_entity(value)
+        except ValueError as e:
+            raise ValueError(f"Could not find channel/group '{value}': {e}")
+
+    username = getattr(entity, "username", None)
+    channel_id = utils.get_peer_id(entity)
+    return entity, username, channel_id
 
 
 def parse_telegram_link(url: str) -> tuple[str | int, int]:
@@ -114,7 +165,16 @@ async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str 
             {"status": "downloading", "pct": pct, "speed": "", "eta": ""},
         )
 
-    await client.download_media(message, file=str(out_file), progress_callback=_progress)
+    from telethon.errors import FloodWaitError
+
+    try:
+        await client.download_media(message, file=str(out_file), progress_callback=_progress)
+    except FloodWaitError as e:
+        await ws_hub.broadcast(job_id, {"status": "rate_limited", "wait_seconds": e.seconds})
+        await asyncio.sleep(e.seconds)
+        await client.download_media(message, file=str(out_file), progress_callback=_progress)
+
+    await mark_telegram_seen(message.chat_id, message.id, str(out_file))
 
     await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
     return Path(out_file)
