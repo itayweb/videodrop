@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Film, RefreshCw, LogOut } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { fetchConfig, fetchJobs, PlaylistConfirmResult } from "./lib/api";
+import { fetchConfig, fetchJobs, PlaylistConfirmResult, TelegramChannelConfirmResult } from "./lib/api";
 import { UrlForm } from "./components/UrlForm";
 import { UploadZone } from "./components/UploadZone";
 import { JobProgress } from "./components/JobProgress";
@@ -120,7 +120,7 @@ export default function App() {
     setActiveJobs((prev) => [...prev, { jobId, source, type, mountName, customFileName }]);
   }
 
-  function handleBatchCreated(result: PlaylistConfirmResult, mountName: string) {
+  function handleBatchCreated(result: PlaylistConfirmResult | TelegramChannelConfirmResult, mountName: string) {
     if (result.jobs.length === 0) return;
     setActiveBatches((prev) => [
       ...prev,

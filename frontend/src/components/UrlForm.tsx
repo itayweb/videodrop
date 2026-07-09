@@ -1,16 +1,20 @@
 import { useEffect, useState } from "react";
-import { Send, Tv, Film, Ban, ListVideo, Youtube } from "lucide-react";
+import { Send, Tv, Film, Ban, ListVideo, Youtube, Users } from "lucide-react";
 import {
   submitUrl,
   fetchArrStatus,
   fetchPlaylistPreview,
+  fetchTelegramChannelPreview,
   PlaylistPreview,
   PlaylistConfirmResult,
+  TelegramChannelPreview,
+  TelegramChannelConfirmResult,
 } from "@/lib/api";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { MountPicker } from "./MountPicker";
 import { PlaylistReview } from "./PlaylistReview";
+import { TelegramChannelReview } from "./TelegramChannelReview";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { cn } from "@/lib/utils";
 
@@ -20,7 +24,7 @@ interface Props {
   token: string;
   mounts: Mount[];
   onJobCreated: (jobId: string, source: string, mountName: string, customFileName?: string) => void;
-  onBatchCreated: (result: PlaylistConfirmResult, mountName: string) => void;
+  onBatchCreated: (result: PlaylistConfirmResult | TelegramChannelConfirmResult, mountName: string) => void;
 }
 
 type MediaType = "none" | "tv" | "movie";
@@ -40,6 +44,7 @@ const SOURCE_BUTTONS: { source: Source; label: string; Icon: any }[] = [
 export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) {
   const [source, setSource] = useState<Source>("telegram");
   const [playlistMode, setPlaylistMode] = useState(false);
+  const [channelMode, setChannelMode] = useState(false);
   const [url, setUrl] = useState("");
   const [filename, setFilename] = useState("");
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
@@ -49,6 +54,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<PlaylistPreview | null>(null);
+  const [channelPreview, setChannelPreview] = useState<TelegramChannelPreview | null>(null);
 
   // Arr availability
   const [arrStatus, setArrStatus] = useState({ sonarr: false, radarr: false });
@@ -57,6 +63,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   }, [token]);
 
   const isPlaylist = source === "youtube" && playlistMode;
+  const isChannel = source === "telegram" && channelMode;
 
   function handleMediaTypeChange(t: MediaType) {
     setMediaType(t);
@@ -76,6 +83,19 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
         setPreview(p);
       } catch (err: any) {
         setError(err.message ?? "Failed to read playlist");
+      } finally {
+        setLoading(false);
+      }
+      return;
+    }
+
+    if (isChannel) {
+      setLoading(true);
+      try {
+        const p = await fetchTelegramChannelPreview(token, url.trim());
+        setChannelPreview(p);
+      } catch (err: any) {
+        setError(err.message ?? "Failed to read channel");
       } finally {
         setLoading(false);
       }
@@ -126,9 +146,24 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     onBatchCreated(result, mountName);
   }
 
+  function handleChannelConfirmed(result: TelegramChannelConfirmResult, mountName: string) {
+    setChannelPreview(null);
+    setUrl("");
+    setChannelMode(false);
+    const skipped = result.skipped?.length ?? 0;
+    if (result.jobs.length === 0) {
+      setNotice(`Nothing to download — all ${skipped} videos already downloaded.`);
+    } else if (skipped > 0) {
+      setNotice(`${result.jobs.length} queued, ${skipped} skipped (already downloaded).`);
+    } else {
+      setNotice("");
+    }
+    onBatchCreated(result, mountName);
+  }
+
   const canSubmit =
     url.trim() && !loading &&
-    (isPlaylist || (mount && (mediaType !== "tv" || !!selectedSeries)));
+    (isPlaylist || isChannel || (mount && (mediaType !== "tv" || !!selectedSeries)));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -143,6 +178,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
               setSource(s);
               setError("");
               if (s === "telegram") setPlaylistMode(false);
+              if (s === "youtube") setChannelMode(false);
             }}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors",
@@ -167,12 +203,26 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
             Playlist
           </label>
         )}
+        {source === "telegram" && (
+          <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={channelMode}
+              onChange={(e) => setChannelMode(e.target.checked)}
+              disabled={loading}
+            />
+            <Users className="h-3.5 w-3.5" />
+            Channel/Group
+          </label>
+        )}
       </div>
 
       <Input
         placeholder={
           source === "telegram"
-            ? "Paste Telegram video URL…"
+            ? isChannel
+              ? "Paste channel/group username or t.me link…"
+              : "Paste Telegram video URL…"
             : isPlaylist
               ? "Paste YouTube playlist URL…"
               : "Paste YouTube video URL…"
@@ -182,7 +232,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
         disabled={loading}
       />
 
-      {!isPlaylist && (
+      {!isPlaylist && !isChannel && (
         <>
           <Input
             placeholder="Custom filename (optional, without extension)"
@@ -232,16 +282,16 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
       )}
 
       <div className="flex gap-2">
-        {!isPlaylist && (
+        {!isPlaylist && !isChannel && (
           <div className="flex-1">
             <MountPicker mounts={mounts} value={mount} onChange={setMount} />
           </div>
         )}
-        <Button type="submit" disabled={!canSubmit} className={cn(isPlaylist && "w-full")}>
-          {isPlaylist ? <ListVideo className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+        <Button type="submit" disabled={!canSubmit} className={cn((isPlaylist || isChannel) && "w-full")}>
+          {isPlaylist || isChannel ? <ListVideo className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           {loading
-            ? isPlaylist ? "Fetching playlist…" : "Submitting…"
-            : isPlaylist ? "Fetch playlist" : "Download"}
+            ? isPlaylist ? "Fetching playlist…" : isChannel ? "Fetching channel…" : "Submitting…"
+            : isPlaylist ? "Fetch playlist" : isChannel ? "Fetch channel" : "Download"}
         </Button>
       </div>
 
@@ -256,6 +306,18 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
           sonarrAvailable={arrStatus.sonarr}
           onCancel={() => setPreview(null)}
           onConfirmed={handleConfirmed}
+        />
+      )}
+
+      {channelPreview && (
+        <TelegramChannelReview
+          token={token}
+          chat={url.trim()}
+          preview={channelPreview}
+          mounts={mounts}
+          sonarrAvailable={arrStatus.sonarr}
+          onCancel={() => setChannelPreview(null)}
+          onConfirmed={handleChannelConfirmed}
         />
       )}
     </form>
