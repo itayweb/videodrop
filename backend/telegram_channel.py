@@ -15,6 +15,29 @@ from .playlist import (
 )
 
 
+def _video_duration(msg) -> int | None:
+    """Duration for both streamable videos and videos sent as plain
+    documents (e.g. .mkv), which Telegram never marks as msg.video."""
+    from telethon.tl.types import DocumentAttributeVideo
+
+    if msg.video:
+        return msg.video.duration
+    doc = getattr(msg, "document", None)
+    if not doc:
+        return None
+    for attr in doc.attributes:
+        if isinstance(attr, DocumentAttributeVideo):
+            return attr.duration
+    return None
+
+
+def _is_video_message(msg) -> bool:
+    if msg.video:
+        return True
+    doc = getattr(msg, "document", None)
+    return bool(doc and doc.mime_type and doc.mime_type.startswith("video/"))
+
+
 async def _fetch_flat(chat_input: str) -> dict:
     from telethon.errors import FloodWaitError
     from .telegram_dl import resolve_channel, _get_client
@@ -28,25 +51,25 @@ async def _fetch_flat(chat_input: str) -> dict:
     entries = []
     try:
         async for msg in client.iter_messages(entity, limit=cap):
-            if not msg.video:
+            if not _is_video_message(msg):
                 continue
             entries.append({
                 "msg_id": msg.id,
                 "date": msg.date.isoformat(),
                 "orig_caption": msg.text or msg.raw_text or "",
-                "duration": msg.video.duration,
+                "duration": _video_duration(msg),
                 "file_size": msg.file.size if msg.file else None,
             })
     except FloodWaitError as e:
         await asyncio.sleep(e.seconds)
         async for msg in client.iter_messages(entity, limit=cap):
-            if not msg.video:
+            if not _is_video_message(msg):
                 continue
             entries.append({
                 "msg_id": msg.id,
                 "date": msg.date.isoformat(),
                 "orig_caption": msg.text or msg.raw_text or "",
-                "duration": msg.video.duration,
+                "duration": _video_duration(msg),
                 "file_size": msg.file.size if msg.file else None,
             })
 
