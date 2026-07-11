@@ -66,7 +66,12 @@ async def download_url(job_id: str, url: str, dest_dir: str, filename: str | Non
     if filename:
         expected = dest_path / f"{filename}.mp4"
         if expected.exists():
-            raise FileExistsError(f"File already exists: {expected}")
+            # Already on disk — likely a retry after a prior attempt's
+            # extract_info() succeeded in writing the file but then raised
+            # a transient-looking error afterward. Treat as done rather
+            # than failing, so the retry loop in jobs.py converges to
+            # "done" and the Sonarr/Radarr import hook still fires.
+            return expected
         outtmpl = str(dest_path / f"{filename}.%(ext)s")
     else:
         outtmpl = str(dest_path / "%(title)s.%(ext)s")
