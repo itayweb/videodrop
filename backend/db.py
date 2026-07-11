@@ -113,13 +113,26 @@ async def mark_telegram_seen(channel_id: int, msg_id: int, dest_path: str) -> No
 
 
 async def get_telegram_seen(channel_id: int, msg_ids: list[int]) -> set[int]:
+    """A msg_id counts as seen only if its recorded dest_path still exists
+    on disk — files deleted outside the app become re-downloadable, and the
+    stale telegram_seen row is cleaned up here rather than lingering forever."""
     if not msg_ids:
         return set()
     placeholders = ",".join("?" * len(msg_ids))
     async with _connect() as db:
         async with db.execute(
-            f"SELECT msg_id FROM telegram_seen WHERE channel_id=? AND msg_id IN ({placeholders})",
+            f"SELECT msg_id, dest_path FROM telegram_seen WHERE channel_id=? AND msg_id IN ({placeholders})",
             (channel_id, *msg_ids),
         ) as cursor:
             rows = await cursor.fetchall()
-    return {r[0] for r in rows}
+
+        stale = [msg_id for msg_id, dest_path in rows if dest_path and not Path(dest_path).exists()]
+        if stale:
+            stale_placeholders = ",".join("?" * len(stale))
+            await db.execute(
+                f"DELETE FROM telegram_seen WHERE channel_id=? AND msg_id IN ({stale_placeholders})",
+                (channel_id, *stale),
+            )
+            await db.commit()
+
+    return {msg_id for msg_id, dest_path in rows if not (dest_path and not Path(dest_path).exists())}
