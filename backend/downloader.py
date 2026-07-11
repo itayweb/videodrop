@@ -79,6 +79,12 @@ async def download_url(job_id: str, url: str, dest_dir: str, filename: str | Non
         "progress_hooks": [_make_progress_hook(job_id, loop)],
         "quiet": True,
         "no_warnings": True,
+        # "android" client sidesteps the PO-token gating that hits "web" and
+        # causes sporadic 403s on otherwise-public videos; "web" as fallback.
+        "extractor_args": {"youtube": {"player_client": ["android", "web"]}},
+        "retries": 10,
+        "fragment_retries": 10,
+        "extractor_retries": 3,
     }
 
     await update_job_status(job_id, "running")

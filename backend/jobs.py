@@ -1,5 +1,6 @@
 """Asyncio job queue — max N concurrent workers."""
 import asyncio
+import logging
 import time
 import uuid
 from pathlib import Path
@@ -11,6 +12,17 @@ from .config import get_config
 _active: dict[str, dict] = {}
 _queue: asyncio.Queue = asyncio.Queue()
 _workers_started = False
+
+log = logging.getLogger(__name__)
+
+_TRANSIENT_ERROR_MARKERS = ("403", "forbidden", "http error 5", "timed out")
+_MAX_DOWNLOAD_ATTEMPTS = 3
+_RETRY_DELAY_SECONDS = 3
+
+
+def _is_transient_error(exc: Exception) -> bool:
+    msg = str(exc).lower()
+    return any(marker in msg for marker in _TRANSIENT_ERROR_MARKERS)
 
 
 def new_job_id() -> str:
@@ -117,7 +129,20 @@ async def _worker():
             if job_type == "url":
                 dest_subpath = item.get("dest_subpath")
                 target_dir = str(Path(mount_path) / dest_subpath) if dest_subpath else mount_path
-                file_path = await download_url(job_id, source, target_dir, filename=filename)
+                attempt = 1
+                while True:
+                    try:
+                        file_path = await download_url(job_id, source, target_dir, filename=filename)
+                        break
+                    except Exception as e:
+                        if attempt >= _MAX_DOWNLOAD_ATTEMPTS or not _is_transient_error(e):
+                            raise
+                        log.warning(
+                            "Transient download error for job %s (attempt %d/%d): %s — retrying in %ds",
+                            job_id, attempt, _MAX_DOWNLOAD_ATTEMPTS, e, _RETRY_DELAY_SECONDS,
+                        )
+                        attempt += 1
+                        await asyncio.sleep(_RETRY_DELAY_SECONDS)
             else:
                 file_path = await assemble_and_move(job_id, source, mount_path)
 
