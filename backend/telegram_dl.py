@@ -58,11 +58,15 @@ def _parse_chat_input(chat_input: str) -> tuple[str, str | None]:
     Returns (kind, value):
       ("username", "somechannel")   — @name, t.me/name, or bare name
       ("invite", "AbCdEf")          — t.me/joinchat/<hash> or t.me/+<hash>
+      ("channel_id", "3688361709")  — t.me/c/<internal_id> (private channel/group)
     """
     s = chat_input.strip()
     m = re.match(r"https?://t\.me/(?:joinchat/|\+)([^/?]+)", s)
     if m:
         return "invite", m.group(1)
+    m = re.match(r"https?://t\.me/c/(\d+)", s)
+    if m:
+        return "channel_id", m.group(1)
     m = re.match(r"https?://t\.me/([^/?]+)", s)
     if m:
         return "username", m.group(1)
@@ -72,9 +76,9 @@ def _parse_chat_input(chat_input: str) -> tuple[str, str | None]:
 async def resolve_channel(chat_input: str):
     """Resolve a pasted channel/group reference to (entity, username, marked_channel_id).
 
-    Public channels resolve directly by username. Private chats can only be
-    resolved via an invite link if the Telethon account has already joined —
-    there is no auto-join; joining is a visible action left to the user.
+    Public channels resolve directly by username. Private chats resolve via an
+    invite link, or via a t.me/c/<id> link IF the Telethon account is already a
+    member — there is no auto-join; joining is a visible action left to the user.
     """
     from telethon.tl.functions.messages import CheckChatInviteRequest
     from telethon.tl.types import ChatInviteAlready, ChatInvitePeek
@@ -92,6 +96,22 @@ async def resolve_channel(chat_input: str):
                 "Not a member of this chat — join it with the configured "
                 "Telegram account first, then retry."
             )
+    elif kind == "channel_id":
+        marked_id = int(f"-100{value}")
+        try:
+            entity = await client.get_entity(marked_id)
+        except ValueError:
+            # Not in the session's entity cache yet — get_dialogs() populates
+            # it for every chat the account is a member of; retry once.
+            await client.get_dialogs()
+            try:
+                entity = await client.get_entity(marked_id)
+            except ValueError as e:
+                raise ValueError(
+                    f"Could not find channel/group with id {value}: {e}. "
+                    "Make sure the configured Telegram account is a member "
+                    "of this chat."
+                )
     else:
         try:
             entity = await client.get_entity(value)
