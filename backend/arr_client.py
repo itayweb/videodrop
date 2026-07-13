@@ -50,7 +50,14 @@ async def sonarr_get_default_profile_id(cfg: ArrConfig) -> int:
     return profiles[0]["id"]
 
 
-async def sonarr_get_root_folder(cfg: ArrConfig) -> str:
+async def sonarr_get_root_folder(cfg: ArrConfig, mount_path: str | None = None) -> str:
+    """Pick which Sonarr root folder a new series should be created under.
+
+    If mount_path matches one of Sonarr's configured root folders (exact match,
+    ignoring a trailing slash), use that one — this lets a brand-new series land
+    under the mount the user picked in the UI. Otherwise fall back to Sonarr's
+    first root folder.
+    """
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
             f"{cfg.url.rstrip('/')}/api/v3/rootfolder",
@@ -60,6 +67,19 @@ async def sonarr_get_root_folder(cfg: ArrConfig) -> str:
         folders = r.json()
     if not folders:
         raise RuntimeError("No root folders found in Sonarr")
+
+    if mount_path:
+        target = mount_path.rstrip("/")
+        for f in folders:
+            if f["path"].rstrip("/") == target:
+                return f["path"]
+        print(
+            f"[sonarr] no root folder matches mount path {mount_path!r} "
+            f"(Sonarr has: {[f['path'] for f in folders]}) — "
+            f"falling back to {folders[0]['path']!r}",
+            flush=True,
+        )
+
     return folders[0]["path"]
 
 
@@ -97,14 +117,21 @@ async def sonarr_episodes_with_files(cfg: ArrConfig, series_id: int) -> set[tupl
     }
 
 
-async def sonarr_add_series(cfg: ArrConfig, tvdb_id: int, title: str, year: int) -> int:
-    """Add a series to Sonarr (creates its folder). Returns the Sonarr series id."""
+async def sonarr_add_series(
+    cfg: ArrConfig, tvdb_id: int, title: str, year: int, mount_path: str | None = None
+) -> int:
+    """Add a series to Sonarr (creates its folder). Returns the Sonarr series id.
+
+    mount_path is only used when the series doesn't exist yet, to pick which
+    root folder to create it under; an existing series keeps its existing
+    folder regardless of mount_path.
+    """
     existing_id = await sonarr_get_series_id(cfg, tvdb_id)
     if existing_id:
         return existing_id
 
     profile_id = await sonarr_get_default_profile_id(cfg)
-    root_folder = await sonarr_get_root_folder(cfg)
+    root_folder = await sonarr_get_root_folder(cfg, mount_path)
 
     payload = {
         "tvdbId": tvdb_id,
