@@ -20,8 +20,6 @@ def _video_duration(msg) -> int | None:
     documents (e.g. .mkv), which Telegram never marks as msg.video."""
     from telethon.tl.types import DocumentAttributeVideo
 
-    if msg.video:
-        return msg.video.duration
     doc = getattr(msg, "document", None)
     if not doc:
         return None
