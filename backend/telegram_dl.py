@@ -142,6 +142,14 @@ def parse_telegram_link(url: str) -> tuple[str | int, int]:
     raise ValueError(f"Unrecognised Telegram link format: {url}")
 
 
+def _parse_flood_seconds(msg: str) -> int | None:
+    """Best-effort extraction of a wait time from a Telethon flood-error
+    message (e.g. 'FLOOD_PREMIUM_WAIT_3'), for error classes/versions that
+    don't expose a `.seconds` attribute."""
+    m = re.search(r"(\d+)", msg)
+    return int(m.group(1)) if m else None
+
+
 async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str | None = None) -> Path:
     """Download media from any Telegram channel message using Telethon."""
     peer, message_id = parse_telegram_link(url)
@@ -185,13 +193,14 @@ async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str 
             {"status": "downloading", "pct": pct, "speed": "", "eta": ""},
         )
 
-    from telethon.errors import FloodWaitError
+    from telethon.errors import FloodError
 
     try:
         await client.download_media(message, file=str(out_file), progress_callback=_progress)
-    except FloodWaitError as e:
-        await ws_hub.broadcast(job_id, {"status": "rate_limited", "wait_seconds": e.seconds})
-        await asyncio.sleep(e.seconds)
+    except FloodError as e:
+        wait = getattr(e, "seconds", None) or _parse_flood_seconds(str(e)) or 5
+        await ws_hub.broadcast(job_id, {"status": "rate_limited", "wait_seconds": wait})
+        await asyncio.sleep(wait)
         await client.download_media(message, file=str(out_file), progress_callback=_progress)
 
     await mark_telegram_seen(message.chat_id, message.id, str(out_file))

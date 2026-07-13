@@ -37,8 +37,8 @@ def _is_video_message(msg) -> bool:
 
 
 async def _fetch_flat(chat_input: str) -> dict:
-    from telethon.errors import FloodWaitError
-    from .telegram_dl import resolve_channel, _get_client
+    from telethon.errors import FloodError
+    from .telegram_dl import resolve_channel, _get_client, _parse_flood_seconds
 
     client = await _get_client()
     entity, username, channel_id = await resolve_channel(chat_input)
@@ -58,8 +58,9 @@ async def _fetch_flat(chat_input: str) -> dict:
                 "duration": _video_duration(msg),
                 "file_size": msg.file.size if msg.file else None,
             })
-    except FloodWaitError as e:
-        await asyncio.sleep(e.seconds)
+    except FloodError as e:
+        wait = getattr(e, "seconds", None) or _parse_flood_seconds(str(e)) or 5
+        await asyncio.sleep(wait)
         async for msg in client.iter_messages(entity, limit=cap):
             if not _is_video_message(msg):
                 continue
