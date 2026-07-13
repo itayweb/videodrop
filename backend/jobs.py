@@ -83,15 +83,19 @@ async def cancel_job(job_id: str):
         await ws_hub.broadcast(job_id, {"status": "cancelled", "pct": 0})
 
 
-async def _post_download_hook(file_path, media_type: str, series_tvdb_id, series_title, series_year):
+async def _post_download_hook(
+    file_path, media_type: str, series_tvdb_id, series_title, series_year,
+    mount_path: str | None = None,
+):
     """Move the file into Sonarr/Radarr's folder and trigger a rescan."""
     from .arr_client import sonarr_add_series, sonarr_import_episode, radarr_import_movie
     cfg = get_config()
 
     if media_type == "tv" and cfg.sonarr:
-        # Ensure series exists in Sonarr (creates folder if new)
+        # Ensure series exists in Sonarr (creates folder if new); mount_path
+        # steers a *new* series' root folder to match the mount picked in the UI.
         series_id = await sonarr_add_series(
-            cfg.sonarr, series_tvdb_id, series_title, series_year or 0
+            cfg.sonarr, series_tvdb_id, series_title, series_year or 0, mount_path=mount_path
         )
         # Give Sonarr a moment to finish creating the series folder if it's new
         await asyncio.sleep(3)
@@ -156,7 +160,10 @@ async def _worker():
 
             # Notify Sonarr/Radarr — surface errors to UI but keep job as "done"
             try:
-                await _post_download_hook(file_path, media_type, series_tvdb_id, series_title, series_year)
+                await _post_download_hook(
+                    file_path, media_type, series_tvdb_id, series_title, series_year,
+                    mount_path=mount_path,
+                )
             except Exception as e:
                 await update_job_status(job_id, "done", error=f"Import warning: {e}")
                 await ws_hub.broadcast(job_id, {"status": "done", "pct": 100, "arr_warning": str(e)})
