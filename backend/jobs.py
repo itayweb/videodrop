@@ -59,13 +59,27 @@ async def enqueue_url_job(
     })
 
 
-async def register_upload_job(job_id: str, filename: str, mount_path: str, mount_name: str):
+async def register_upload_job(
+    job_id: str,
+    filename: str,
+    mount_path: str,
+    mount_name: str,
+    media_type: str = "none",
+    series_tvdb_id: int | None = None,
+    series_title: str | None = None,
+    series_year: int | None = None,
+):
     """Create the job record for a chunked upload. Does NOT queue it for
     assembly — that only happens once all chunks are received, via
     finalize_upload_job(), so the worker can never pick up an upload before
     its chunks exist on disk."""
     await insert_job(job_id, "upload", filename, mount_name)
-    _active[job_id] = {"id": job_id, "type": "upload", "status": "uploading", "filename": filename, "mount_path": mount_path, "mount_name": mount_name, "started_at": None}
+    _active[job_id] = {
+        "id": job_id, "type": "upload", "status": "uploading", "filename": filename,
+        "mount_path": mount_path, "mount_name": mount_name, "started_at": None,
+        "media_type": media_type, "series_tvdb_id": series_tvdb_id,
+        "series_title": series_title, "series_year": series_year,
+    }
 
 
 async def finalize_upload_job(job_id: str):
@@ -79,10 +93,10 @@ async def finalize_upload_job(job_id: str):
         "source": job["filename"],
         "mount_path": job["mount_path"],
         "filename": job["filename"],
-        "media_type": "none",
-        "series_tvdb_id": None,
-        "series_title": None,
-        "series_year": None,
+        "media_type": job["media_type"],
+        "series_tvdb_id": job["series_tvdb_id"],
+        "series_title": job["series_title"],
+        "series_year": job["series_year"],
     })
 
 

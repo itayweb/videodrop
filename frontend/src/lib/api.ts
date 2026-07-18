@@ -196,14 +196,22 @@ export async function initUpload(
   filename: string,
   mountName: string,
   totalChunks: number,
-  customFilename?: string
+  customFilename?: string,
+  mediaType: "none" | "tv" | "movie" = "none",
+  seriesTvdbId?: number,
+  seriesTitle?: string,
+  seriesYear?: number
 ) {
   const params = new URLSearchParams({
     filename,
     mount_name: mountName,
     total_chunks: String(totalChunks),
+    media_type: mediaType,
   });
   if (customFilename?.trim()) params.set("custom_filename", customFilename.trim());
+  if (seriesTvdbId != null) params.set("series_tvdb_id", String(seriesTvdbId));
+  if (seriesTitle) params.set("series_title", seriesTitle);
+  if (seriesYear != null) params.set("series_year", String(seriesYear));
   const res = await fetch(`/api/jobs/upload/init?${params}`, {
     method: "POST",
     headers: authHeader(token),
@@ -242,10 +250,17 @@ export async function uploadFile(
   file: File,
   mountName: string,
   onProgress: (pct: number) => void,
-  customFilename?: string
+  customFilename?: string,
+  mediaType: "none" | "tv" | "movie" = "none",
+  seriesTvdbId?: number,
+  seriesTitle?: string,
+  seriesYear?: number
 ): Promise<string> {
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-  const { job_id } = await initUpload(token, file.name, mountName, totalChunks, customFilename);
+  const { job_id } = await initUpload(
+    token, file.name, mountName, totalChunks, customFilename,
+    mediaType, seriesTvdbId, seriesTitle, seriesYear
+  );
 
   for (let i = 0; i < totalChunks; i++) {
     const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);
