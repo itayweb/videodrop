@@ -31,6 +31,14 @@ CREATE TABLE IF NOT EXISTS telegram_seen (
 );
 """
 
+CREATE_DAILYMOTION_SEEN_SQL = """
+CREATE TABLE IF NOT EXISTS dailymotion_seen (
+    video_id TEXT PRIMARY KEY,
+    dest_path TEXT,
+    created_at TEXT NOT NULL
+);
+"""
+
 
 @asynccontextmanager
 async def _connect():
@@ -48,6 +56,7 @@ async def init_db():
         await db.execute("PRAGMA journal_mode=WAL")
         await db.execute(CREATE_SQL)
         await db.execute(CREATE_TELEGRAM_SEEN_SQL)
+        await db.execute(CREATE_DAILYMOTION_SEEN_SQL)
         # Pre-existing DBs were created without the batch columns
         async with db.execute("PRAGMA table_info(jobs)") as cursor:
             cols = {row[1] for row in await cursor.fetchall()}
@@ -136,3 +145,38 @@ async def get_telegram_seen(channel_id: int, msg_ids: list[int]) -> set[int]:
             await db.commit()
 
     return {msg_id for msg_id, dest_path in rows if not (dest_path and not Path(dest_path).exists())}
+
+
+async def mark_dailymotion_seen(video_id: str, dest_path: str) -> None:
+    now = datetime.now(timezone.utc).isoformat()
+    async with _connect() as db:
+        await db.execute(
+            "INSERT OR REPLACE INTO dailymotion_seen (video_id, dest_path, created_at) VALUES (?,?,?)",
+            (video_id, dest_path, now),
+        )
+        await db.commit()
+
+
+async def get_dailymotion_seen(video_ids: list[str]) -> set[str]:
+    """A video_id counts as seen only if its recorded dest_path still exists
+    on disk — same staleness-cleanup semantics as get_telegram_seen."""
+    if not video_ids:
+        return set()
+    placeholders = ",".join("?" * len(video_ids))
+    async with _connect() as db:
+        async with db.execute(
+            f"SELECT video_id, dest_path FROM dailymotion_seen WHERE video_id IN ({placeholders})",
+            video_ids,
+        ) as cursor:
+            rows = await cursor.fetchall()
+
+        stale = [vid for vid, dest_path in rows if dest_path and not Path(dest_path).exists()]
+        if stale:
+            stale_placeholders = ",".join("?" * len(stale))
+            await db.execute(
+                f"DELETE FROM dailymotion_seen WHERE video_id IN ({stale_placeholders})",
+                stale,
+            )
+            await db.commit()
+
+    return {vid for vid, dest_path in rows if not (dest_path and not Path(dest_path).exists())}

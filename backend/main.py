@@ -21,7 +21,7 @@ from pydantic import BaseModel
 
 from .auth import check_token, require_auth
 from .config import get_config, save_config, reload_config, Mount, TelegramConfig, ArrConfig, Config
-from .db import get_job, get_jobs, get_telegram_seen, init_db
+from .db import get_job, get_jobs, get_telegram_seen, get_dailymotion_seen, init_db
 from .jobs import (
     cancel_job,
     enqueue_url_job,
@@ -434,6 +434,135 @@ async def telegram_channel_confirm(req: TelegramChannelConfirmRequest, _: bool =
                 batch_label=batch_label,
             )
             jobs.append({"job_id": job_id, "filename": fname, "msg_id": entry.msg_id})
+
+    else:
+        raise HTTPException(400, f"Unknown dest_mode: {req.dest_mode}")
+
+    return {"batch_id": batch_id, "batch_label": batch_label, "jobs": jobs, "skipped": skipped}
+
+
+# ── DailyMotion channel ─────────────────────────────────────────────────────────
+
+class DailymotionPreviewStartRequest(BaseModel):
+    preview_id: str
+    url: str
+
+
+class DailymotionConfirmEntry(BaseModel):
+    video_id: str
+    upload_date: str | None = None
+    season: int | None = None
+    episode_number: int | None = None
+    title: str
+
+
+class DailymotionConfirmRequest(BaseModel):
+    channel_name: str          # echoed back from preview; used for the raw-mode folder name
+    mount_name: str
+    dest_mode: str             # "episodes" | "raw"
+    media_type: str = "none"   # "none" | "tv" — episodes mode only
+    show_name: str | None = None
+    series_tvdb_id: int | None = None
+    series_title: str | None = None
+    series_year: int | None = None
+    entries: list[DailymotionConfirmEntry]
+
+
+@app.post("/api/dailymotion/preview/start", status_code=status.HTTP_202_ACCEPTED)
+async def dailymotion_preview_start(req: DailymotionPreviewStartRequest, _: bool = Depends(require_auth)):
+    from .dailymotion import run_preview
+    asyncio.create_task(run_preview(req.preview_id, req.url))
+    return {"preview_id": req.preview_id}
+
+
+@app.post("/api/dailymotion/confirm", status_code=status.HTTP_202_ACCEPTED)
+async def dailymotion_confirm(req: DailymotionConfirmRequest, _: bool = Depends(require_auth)):
+    from .dailymotion import build_raw_filename, build_video_url
+    from .playlist import build_episode_filename, build_subpath, sanitize_filename
+
+    cfg = get_config()
+    mount = next((m for m in cfg.mounts if m.name == req.mount_name), None)
+    if mount is None:
+        raise HTTPException(400, f"Unknown mount: {req.mount_name}")
+    if not req.entries:
+        raise HTTPException(400, "No entries selected")
+
+    batch_id = new_job_id()
+    jobs = []
+    skipped = []
+    dm_seen = await get_dailymotion_seen([e.video_id for e in req.entries])
+
+    if req.dest_mode == "episodes":
+        show_name = (req.show_name or "").strip()
+        if not show_name:
+            raise HTTPException(400, "Show name is required")
+        seen_pairs: set[tuple[int, int]] = set()
+        for e in req.entries:
+            if e.season is None or e.episode_number is None:
+                raise HTTPException(400, "Season and episode number required in episodes mode")
+            key = (e.season, e.episode_number)
+            if key in seen_pairs:
+                raise HTTPException(400, f"Duplicate episode: S{e.season:02d}E{e.episode_number:02d}")
+            seen_pairs.add(key)
+
+        seasons = sorted({e.season for e in req.entries})
+        if len(seasons) == 1:
+            batch_label = f"{show_name} — Season {seasons[0]:02d}"
+        else:
+            batch_label = f"{show_name} — S{seasons[0]:02d}–S{seasons[-1]:02d}"
+
+        imported: set[tuple[int, int]] = set()
+        if req.media_type == "tv" and cfg.sonarr and req.series_tvdb_id:
+            from .arr_client import sonarr_get_series_id, sonarr_episodes_with_files
+            try:
+                series_id = await sonarr_get_series_id(cfg.sonarr, req.series_tvdb_id)
+                if series_id:
+                    imported = await sonarr_episodes_with_files(cfg.sonarr, series_id)
+            except Exception:
+                imported = set()
+
+        for entry in sorted(req.entries, key=lambda e: (e.season, e.episode_number)):
+            subpath = build_subpath(show_name, entry.season)
+            fname = sanitize_filename(
+                build_episode_filename(show_name, entry.season, entry.episode_number, entry.title)
+            )
+            already = (entry.season, entry.episode_number) in imported or entry.video_id in dm_seen
+            if already or (Path(mount.path) / subpath / f"{fname}.mp4").exists():
+                skipped.append({"video_id": entry.video_id, "filename": fname})
+                continue
+            job_id = new_job_id()
+            await enqueue_url_job(
+                job_id, build_video_url(entry.video_id), mount.path, mount.name,
+                filename=fname,
+                media_type=req.media_type,
+                series_tvdb_id=req.series_tvdb_id,
+                series_title=req.series_title,
+                series_year=req.series_year,
+                dest_subpath=subpath,
+                batch_id=batch_id,
+                batch_label=batch_label,
+            )
+            jobs.append({"job_id": job_id, "filename": fname, "video_id": entry.video_id})
+
+    elif req.dest_mode == "raw":
+        folder = sanitize_filename(req.channel_name)
+        batch_label = f"{folder} — {len(req.entries)} video(s)"
+        for entry in req.entries:
+            fname = build_raw_filename(entry.upload_date, entry.video_id, entry.title)
+            already = entry.video_id in dm_seen
+            if already or (Path(mount.path) / folder / f"{fname}.mp4").exists():
+                skipped.append({"video_id": entry.video_id, "filename": fname})
+                continue
+            job_id = new_job_id()
+            await enqueue_url_job(
+                job_id, build_video_url(entry.video_id), mount.path, mount.name,
+                filename=fname,
+                media_type="none",
+                dest_subpath=folder,
+                batch_id=batch_id,
+                batch_label=batch_label,
+            )
+            jobs.append({"job_id": job_id, "filename": fname, "video_id": entry.video_id})
 
     else:
         raise HTTPException(400, f"Unknown dest_mode: {req.dest_mode}")

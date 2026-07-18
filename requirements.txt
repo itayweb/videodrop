@@ -11,3 +11,8 @@ pyyaml==6.0.2
 aiofiles==24.1.0
 telethon==1.36.0
 httpx==0.27.2
+# Needed by yt-dlp's DailyMotion extractor for browser-impersonation to bypass
+# anti-bot checks on the per-video metadata/download request — without it every
+# DailyMotion video fetch fails with "attempting impersonation... none of these
+# impersonate targets are available".
+curl_cffi==0.15.0
