@@ -195,13 +195,15 @@ export async function initUpload(
   token: string,
   filename: string,
   mountName: string,
-  totalChunks: number
+  totalChunks: number,
+  customFilename?: string
 ) {
   const params = new URLSearchParams({
     filename,
     mount_name: mountName,
     total_chunks: String(totalChunks),
   });
+  if (customFilename?.trim()) params.set("custom_filename", customFilename.trim());
   const res = await fetch(`/api/jobs/upload/init?${params}`, {
     method: "POST",
     headers: authHeader(token),
@@ -239,10 +241,11 @@ export async function uploadFile(
   token: string,
   file: File,
   mountName: string,
-  onProgress: (pct: number) => void
+  onProgress: (pct: number) => void,
+  customFilename?: string
 ): Promise<string> {
   const totalChunks = Math.ceil(file.size / CHUNK_SIZE);
-  const { job_id } = await initUpload(token, file.name, mountName, totalChunks);
+  const { job_id } = await initUpload(token, file.name, mountName, totalChunks, customFilename);
 
   for (let i = 0; i < totalChunks; i++) {
     const blob = file.slice(i * CHUNK_SIZE, (i + 1) * CHUNK_SIZE);

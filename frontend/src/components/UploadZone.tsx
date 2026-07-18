@@ -2,6 +2,7 @@ import { useRef, useState } from "react";
 import { UploadCloud } from "lucide-react";
 import { uploadFile } from "@/lib/api";
 import { Button } from "./ui/button";
+import { Input } from "./ui/input";
 import { MountPicker } from "./MountPicker";
 import { cn } from "@/lib/utils";
 
@@ -20,6 +21,7 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
+  const [customFileName, setCustomFileName] = useState("");
   const [uploading, setUploading] = useState(false);
   const [pct, setPct] = useState(0);
   const [error, setError] = useState("");
@@ -38,9 +40,10 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
     setUploading(true);
     setPct(0);
     try {
-      const jobId = await uploadFile(token, file, mount, setPct);
+      const jobId = await uploadFile(token, file, mount, setPct, customFileName);
       onJobCreated(jobId, file.name, mount);
       setFile(null);
+      setCustomFileName("");
       setPct(0);
     } catch (err: any) {
       setError(err.message ?? "Upload failed");
@@ -72,6 +75,13 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
         )}
         <input ref={inputRef} type="file" accept="video/*" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
       </div>
+
+      <Input
+        placeholder="Custom filename (optional, without extension)"
+        value={customFileName}
+        onChange={(e) => setCustomFileName(e.target.value)}
+        disabled={uploading}
+      />
 
       <div className="flex gap-2">
         <div className="flex-1">
