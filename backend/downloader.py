@@ -13,6 +13,19 @@ def _is_telegram(url: str) -> bool:
     return bool(re.match(r"https?://t\.me/", url.strip()))
 
 
+_DAILYMOTION_VIDEO_RE = re.compile(
+    r"dailymotion\.[a-z]{2,3}/(?:video|embed/video)/([0-9a-zA-Z]+)|dai\.ly/([0-9a-zA-Z]+)",
+    re.IGNORECASE,
+)
+
+
+def _dailymotion_video_id(url: str) -> str | None:
+    m = _DAILYMOTION_VIDEO_RE.search(url)
+    if not m:
+        return None
+    return m.group(1) or m.group(2)
+
+
 def _make_progress_hook(job_id: str, loop: asyncio.AbstractEventLoop):
     def hook(d: dict):
         if d["status"] == "downloading":
@@ -102,4 +115,10 @@ async def download_url(job_id: str, url: str, dest_dir: str, filename: str | Non
             return ydl.prepare_filename(info).replace(".webm", ".mp4").replace(".mkv", ".mp4")
 
     out_file = await asyncio.get_event_loop().run_in_executor(None, _run)
+
+    video_id = _dailymotion_video_id(url)
+    if video_id:
+        from .db import mark_dailymotion_seen
+        await mark_dailymotion_seen(video_id, str(out_file))
+
     return Path(out_file)

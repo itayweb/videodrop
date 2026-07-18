@@ -177,6 +177,86 @@ export async function confirmTelegramChannel(
   return res.json();
 }
 
+export interface DailymotionEntry {
+  video_id: string;
+  upload_date: string | null;      // "YYYYMMDD" from yt-dlp, or null
+  orig_title: string;
+  translated_title: string;
+  translated: boolean;
+  duration: number | null;
+  episode_number: number | null;
+  season_number: number | null;
+  already_downloaded: boolean;
+  unavailable: boolean;
+}
+
+export interface DailymotionPreview {
+  channel_name: string;
+  channel_title: string;
+  channel_title_translated: string;
+  suggested_season: number;
+  entries: DailymotionEntry[];
+  truncated: boolean;
+}
+
+export interface DailymotionConfirmPayload {
+  channel_name: string;
+  mount_name: string;
+  dest_mode: "episodes" | "raw";
+  media_type: "none" | "tv";
+  show_name?: string | null;
+  series_tvdb_id?: number | null;
+  series_title?: string | null;
+  series_year?: number | null;
+  entries: {
+    video_id: string;
+    upload_date: string | null;
+    season?: number | null;
+    episode_number?: number | null;
+    title: string;
+  }[];
+}
+
+export interface DailymotionConfirmResult {
+  batch_id: string;
+  batch_label: string;
+  jobs: { job_id: string; filename: string; video_id: string }[];
+  skipped: { video_id: string; filename: string }[];
+}
+
+export async function startDailymotionPreview(
+  token: string,
+  previewId: string,
+  url: string
+): Promise<{ preview_id: string }> {
+  const res = await fetch("/api/dailymotion/preview/start", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify({ preview_id: previewId, url }),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
+export async function confirmDailymotion(
+  token: string,
+  payload: DailymotionConfirmPayload
+): Promise<DailymotionConfirmResult> {
+  const res = await fetch("/api/dailymotion/confirm", {
+    method: "POST",
+    headers: { ...authHeader(token), "Content-Type": "application/json" },
+    body: JSON.stringify(payload),
+  });
+  if (!res.ok) {
+    const body = await res.json().catch(() => null);
+    throw new Error(body?.detail ?? (await res.text()));
+  }
+  return res.json();
+}
+
 export async function searchSonarr(token: string, q: string) {
   const res = await fetch(`/api/sonarr/search?q=${encodeURIComponent(q)}`, {
     headers: authHeader(token),

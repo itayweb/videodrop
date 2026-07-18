@@ -1,20 +1,25 @@
 import { useEffect, useState } from "react";
-import { Send, Tv, Film, Ban, ListVideo, Youtube, Users } from "lucide-react";
+import { Send, Tv, Film, Ban, ListVideo, Youtube, Users, Clapperboard } from "lucide-react";
 import {
   submitUrl,
   fetchArrStatus,
   fetchPlaylistPreview,
   fetchTelegramChannelPreview,
+  startDailymotionPreview,
+  openJobSocket,
   PlaylistPreview,
   PlaylistConfirmResult,
   TelegramChannelPreview,
   TelegramChannelConfirmResult,
+  DailymotionPreview,
+  DailymotionConfirmResult,
 } from "@/lib/api";
 import { Input } from "./ui/input";
 import { Button } from "./ui/button";
 import { MountPicker } from "./MountPicker";
 import { PlaylistReview } from "./PlaylistReview";
 import { TelegramChannelReview } from "./TelegramChannelReview";
+import { DailyMotionReview } from "./DailyMotionReview";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { cn } from "@/lib/utils";
 
@@ -24,11 +29,11 @@ interface Props {
   token: string;
   mounts: Mount[];
   onJobCreated: (jobId: string, source: string, mountName: string, customFileName?: string) => void;
-  onBatchCreated: (result: PlaylistConfirmResult | TelegramChannelConfirmResult, mountName: string) => void;
+  onBatchCreated: (result: PlaylistConfirmResult | TelegramChannelConfirmResult | DailymotionConfirmResult, mountName: string) => void;
 }
 
 type MediaType = "none" | "tv" | "movie";
-type Source = "telegram" | "youtube";
+type Source = "telegram" | "youtube" | "dailymotion";
 
 const MEDIA_BUTTONS: { type: MediaType; label: string; Icon: any }[] = [
   { type: "none", label: "None", Icon: Ban },
@@ -39,12 +44,14 @@ const MEDIA_BUTTONS: { type: MediaType; label: string; Icon: any }[] = [
 const SOURCE_BUTTONS: { source: Source; label: string; Icon: any }[] = [
   { source: "telegram", label: "Telegram", Icon: Send },
   { source: "youtube",  label: "YouTube", Icon: Youtube },
+  { source: "dailymotion", label: "DailyMotion", Icon: Clapperboard },
 ];
 
 export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) {
   const [source, setSource] = useState<Source>("telegram");
   const [playlistMode, setPlaylistMode] = useState(false);
   const [channelMode, setChannelMode] = useState(false);
+  const [dailymotionBulkMode, setDailymotionBulkMode] = useState(false);
   const [url, setUrl] = useState("");
   const [filename, setFilename] = useState("");
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
@@ -55,6 +62,8 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   const [notice, setNotice] = useState("");
   const [preview, setPreview] = useState<PlaylistPreview | null>(null);
   const [channelPreview, setChannelPreview] = useState<TelegramChannelPreview | null>(null);
+  const [dailymotionPreview, setDailymotionPreview] = useState<DailymotionPreview | null>(null);
+  const [dailymotionProgress, setDailymotionProgress] = useState<{ fetched: number; total: number } | null>(null);
 
   // Arr availability
   const [arrStatus, setArrStatus] = useState({ sonarr: false, radarr: false });
@@ -64,6 +73,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
 
   const isPlaylist = source === "youtube" && playlistMode;
   const isChannel = source === "telegram" && channelMode;
+  const isDailymotionBulk = source === "dailymotion" && dailymotionBulkMode;
 
   function handleMediaTypeChange(t: MediaType) {
     setMediaType(t);
@@ -98,6 +108,36 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
         setError(err.message ?? "Failed to read channel");
       } finally {
         setLoading(false);
+      }
+      return;
+    }
+
+    if (isDailymotionBulk) {
+      setLoading(true);
+      setDailymotionProgress({ fetched: 0, total: 0 });
+      const previewId = crypto.randomUUID();
+      const ws = openJobSocket(token, previewId, (data: any) => {
+        if (data.type === "progress") {
+          setDailymotionProgress({ fetched: data.fetched, total: data.total });
+        } else if (data.type === "done") {
+          setDailymotionPreview(data.preview);
+          setDailymotionProgress(null);
+          setLoading(false);
+          ws.close();
+        } else if (data.type === "error") {
+          setError(data.message ?? "Failed to read channel");
+          setDailymotionProgress(null);
+          setLoading(false);
+          ws.close();
+        }
+      });
+      try {
+        await startDailymotionPreview(token, previewId, url.trim());
+      } catch (err: any) {
+        setError(err.message ?? "Failed to read channel");
+        setDailymotionProgress(null);
+        setLoading(false);
+        ws.close();
       }
       return;
     }
@@ -161,9 +201,24 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     onBatchCreated(result, mountName);
   }
 
+  function handleDailymotionConfirmed(result: DailymotionConfirmResult, mountName: string) {
+    setDailymotionPreview(null);
+    setUrl("");
+    setDailymotionBulkMode(false);
+    const skipped = result.skipped?.length ?? 0;
+    if (result.jobs.length === 0) {
+      setNotice(`Nothing to download — all ${skipped} videos already downloaded.`);
+    } else if (skipped > 0) {
+      setNotice(`${result.jobs.length} queued, ${skipped} skipped (already downloaded).`);
+    } else {
+      setNotice("");
+    }
+    onBatchCreated(result, mountName);
+  }
+
   const canSubmit =
     url.trim() && !loading &&
-    (isPlaylist || isChannel || (mount && (mediaType !== "tv" || !!selectedSeries)));
+    (isPlaylist || isChannel || isDailymotionBulk || (mount && (mediaType !== "tv" || !!selectedSeries)));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -177,8 +232,9 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
             onClick={() => {
               setSource(s);
               setError("");
-              if (s === "telegram") setPlaylistMode(false);
-              if (s === "youtube") setChannelMode(false);
+              if (s !== "youtube") setPlaylistMode(false);
+              if (s !== "telegram") setChannelMode(false);
+              if (s !== "dailymotion") setDailymotionBulkMode(false);
             }}
             className={cn(
               "flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors",
@@ -215,6 +271,18 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
             Channel/Group
           </label>
         )}
+        {source === "dailymotion" && (
+          <label className="flex items-center gap-1.5 px-3 py-1.5 text-sm text-muted-foreground cursor-pointer select-none">
+            <input
+              type="checkbox"
+              checked={dailymotionBulkMode}
+              onChange={(e) => setDailymotionBulkMode(e.target.checked)}
+              disabled={loading}
+            />
+            <Users className="h-3.5 w-3.5" />
+            Channel (bulk)
+          </label>
+        )}
       </div>
 
       <Input
@@ -223,16 +291,26 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
             ? isChannel
               ? "Paste channel/group username or t.me link…"
               : "Paste Telegram video URL…"
-            : isPlaylist
-              ? "Paste YouTube playlist URL…"
-              : "Paste YouTube video URL…"
+            : source === "youtube"
+              ? isPlaylist
+                ? "Paste YouTube playlist URL…"
+                : "Paste YouTube video URL…"
+              : isDailymotionBulk
+                ? "Paste DailyMotion user/channel URL…"
+                : "Paste DailyMotion video URL…"
         }
         value={url}
         onChange={(e) => setUrl(e.target.value)}
         disabled={loading}
       />
 
-      {!isPlaylist && !isChannel && (
+      {isDailymotionBulk && dailymotionProgress && (
+        <p className="text-xs text-muted-foreground">
+          Fetching metadata… {dailymotionProgress.fetched}/{dailymotionProgress.total || "?"}
+        </p>
+      )}
+
+      {!isPlaylist && !isChannel && !isDailymotionBulk && (
         <>
           <Input
             placeholder="Custom filename (optional, without extension)"
@@ -282,16 +360,16 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
       )}
 
       <div className="flex gap-2">
-        {!isPlaylist && !isChannel && (
+        {!isPlaylist && !isChannel && !isDailymotionBulk && (
           <div className="flex-1">
             <MountPicker mounts={mounts} value={mount} onChange={setMount} />
           </div>
         )}
-        <Button type="submit" disabled={!canSubmit} className={cn((isPlaylist || isChannel) && "w-full")}>
-          {isPlaylist || isChannel ? <ListVideo className="h-4 w-4" /> : <Send className="h-4 w-4" />}
+        <Button type="submit" disabled={!canSubmit} className={cn((isPlaylist || isChannel || isDailymotionBulk) && "w-full")}>
+          {isPlaylist || isChannel || isDailymotionBulk ? <ListVideo className="h-4 w-4" /> : <Send className="h-4 w-4" />}
           {loading
-            ? isPlaylist ? "Fetching playlist…" : isChannel ? "Fetching channel…" : "Submitting…"
-            : isPlaylist ? "Fetch playlist" : isChannel ? "Fetch channel" : "Download"}
+            ? isPlaylist ? "Fetching playlist…" : isChannel ? "Fetching channel…" : isDailymotionBulk ? "Fetching channel…" : "Submitting…"
+            : isPlaylist ? "Fetch playlist" : isChannel ? "Fetch channel" : isDailymotionBulk ? "Fetch channel" : "Download"}
         </Button>
       </div>
 
@@ -306,6 +384,18 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
           sonarrAvailable={arrStatus.sonarr}
           onCancel={() => setPreview(null)}
           onConfirmed={handleConfirmed}
+        />
+      )}
+
+      {dailymotionPreview && (
+        <DailyMotionReview
+          token={token}
+          channelName={dailymotionPreview.channel_name}
+          preview={dailymotionPreview}
+          mounts={mounts}
+          sonarrAvailable={arrStatus.sonarr}
+          onCancel={() => setDailymotionPreview(null)}
+          onConfirmed={handleDailymotionConfirmed}
         />
       )}
 
