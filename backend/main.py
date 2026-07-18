@@ -24,10 +24,11 @@ from .config import get_config, save_config, reload_config, Mount, TelegramConfi
 from .db import get_job, get_jobs, get_telegram_seen, init_db
 from .jobs import (
     cancel_job,
-    enqueue_upload_job,
     enqueue_url_job,
+    finalize_upload_job,
     get_active_jobs,
     new_job_id,
+    register_upload_job,
     start_workers,
 )
 from . import ws_hub
@@ -468,14 +469,24 @@ async def init_upload(
     filename: str = Query(...),
     mount_name: str = Query(...),
     total_chunks: int = Query(...),
+    custom_filename: str | None = Query(None),
     _: bool = Depends(require_auth),
 ):
+    from .playlist import sanitize_filename
+
     cfg = get_config()
     mount = next((m for m in cfg.mounts if m.name == mount_name), None)
     if mount is None:
         raise HTTPException(400, f"Unknown mount: {mount_name}")
+
+    orig_ext = Path(filename).suffix
+    base = custom_filename.strip().replace("/", "").replace("\\", "") if custom_filename else ""
+    if not base:
+        base = sanitize_filename(Path(filename).stem)
+    final_filename = f"{base}{orig_ext}"
+
     job_id = new_job_id()
-    await enqueue_upload_job(job_id, filename, mount.path, mount.name)
+    await register_upload_job(job_id, final_filename, mount.path, mount.name)
     return {"job_id": job_id, "total_chunks": total_chunks}
 
 
@@ -489,6 +500,8 @@ async def upload_chunk(
     _: bool = Depends(require_auth),
 ):
     done = await receive_chunk(job_id, filename, chunk_index, total_chunks, file)
+    if done:
+        await finalize_upload_job(job_id)
     return {"received": chunk_index + 1, "done": done}
 
 

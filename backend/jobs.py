@@ -59,15 +59,26 @@ async def enqueue_url_job(
     })
 
 
-async def enqueue_upload_job(job_id: str, filename: str, mount_path: str, mount_name: str):
+async def register_upload_job(job_id: str, filename: str, mount_path: str, mount_name: str):
+    """Create the job record for a chunked upload. Does NOT queue it for
+    assembly — that only happens once all chunks are received, via
+    finalize_upload_job(), so the worker can never pick up an upload before
+    its chunks exist on disk."""
     await insert_job(job_id, "upload", filename, mount_name)
-    _active[job_id] = {"id": job_id, "type": "upload", "status": "queued", "filename": filename, "mount_path": mount_path, "mount_name": mount_name, "started_at": None}
+    _active[job_id] = {"id": job_id, "type": "upload", "status": "uploading", "filename": filename, "mount_path": mount_path, "mount_name": mount_name, "started_at": None}
+
+
+async def finalize_upload_job(job_id: str):
+    """Queue a registered upload job for assembly once its last chunk has
+    been received."""
+    job = _active[job_id]
+    job["status"] = "queued"
     await _queue.put({
         "job_type": "upload",
         "job_id": job_id,
-        "source": filename,
-        "mount_path": mount_path,
-        "filename": filename,
+        "source": job["filename"],
+        "mount_path": job["mount_path"],
+        "filename": job["filename"],
         "media_type": "none",
         "series_tvdb_id": None,
         "series_title": None,
@@ -192,4 +203,4 @@ async def start_workers():
 
 
 def get_active_jobs() -> list[dict]:
-    return [j for j in _active.values() if j["status"] in ("queued", "running")]
+    return [j for j in _active.values() if j["status"] in ("queued", "running", "uploading")]
