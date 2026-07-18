@@ -1,9 +1,10 @@
-import { useRef, useState } from "react";
-import { UploadCloud } from "lucide-react";
-import { uploadFile } from "@/lib/api";
+import { useEffect, useRef, useState } from "react";
+import { UploadCloud, Ban, Tv, Film } from "lucide-react";
+import { uploadFile, fetchArrStatus } from "@/lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { MountPicker } from "./MountPicker";
+import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { cn } from "@/lib/utils";
 
 interface Mount {
@@ -17,15 +18,35 @@ interface Props {
   onJobCreated: (jobId: string, source: string, mountName: string) => void;
 }
 
+type MediaType = "none" | "tv" | "movie";
+
+const MEDIA_BUTTONS: { type: MediaType; label: string; Icon: any }[] = [
+  { type: "none", label: "None", Icon: Ban },
+  { type: "tv",   label: "TV Show", Icon: Tv },
+  { type: "movie",label: "Movie", Icon: Film },
+];
+
 export function UploadZone({ token, mounts, onJobCreated }: Props) {
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
   const [dragging, setDragging] = useState(false);
   const [file, setFile] = useState<File | null>(null);
   const [customFileName, setCustomFileName] = useState("");
+  const [mediaType, setMediaType] = useState<MediaType>("none");
+  const [selectedSeries, setSelectedSeries] = useState<SonarrResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [pct, setPct] = useState(0);
   const [error, setError] = useState("");
   const inputRef = useRef<HTMLInputElement>(null);
+
+  const [arrStatus, setArrStatus] = useState({ sonarr: false, radarr: false });
+  useEffect(() => {
+    fetchArrStatus(token).then(setArrStatus);
+  }, [token]);
+
+  function handleMediaTypeChange(t: MediaType) {
+    setMediaType(t);
+    setSelectedSeries(null);
+  }
 
   function handleDrop(e: React.DragEvent) {
     e.preventDefault();
@@ -36,14 +57,23 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
 
   async function handleUpload() {
     if (!file || !mount) return;
+    if (mediaType === "tv" && !selectedSeries) {
+      setError("Please select a TV series from the search results.");
+      return;
+    }
     setError("");
     setUploading(true);
     setPct(0);
     try {
-      const jobId = await uploadFile(token, file, mount, setPct, customFileName);
+      const jobId = await uploadFile(
+        token, file, mount, setPct, customFileName,
+        mediaType, selectedSeries?.tvdbId, selectedSeries?.title, selectedSeries?.year
+      );
       onJobCreated(jobId, file.name, mount);
       setFile(null);
       setCustomFileName("");
+      setMediaType("none");
+      setSelectedSeries(null);
       setPct(0);
     } catch (err: any) {
       setError(err.message ?? "Upload failed");
@@ -83,11 +113,52 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
         disabled={uploading}
       />
 
+      {/* Media type toggle */}
+      <div className="flex gap-2">
+        {MEDIA_BUTTONS.map(({ type, label, Icon }) => {
+          const disabled =
+            (type === "tv" && !arrStatus.sonarr) ||
+            (type === "movie" && !arrStatus.radarr);
+          return (
+            <button
+              key={type}
+              type="button"
+              disabled={disabled}
+              onClick={() => handleMediaTypeChange(type)}
+              title={disabled ? `${label} — not configured in config.yaml` : label}
+              className={cn(
+                "flex items-center gap-1.5 px-3 py-1.5 rounded-md border text-sm transition-colors",
+                mediaType === type
+                  ? "bg-primary text-primary-foreground border-primary"
+                  : "border-border text-muted-foreground hover:text-foreground hover:border-foreground",
+                disabled && "opacity-40 cursor-not-allowed"
+              )}
+            >
+              <Icon className="h-3.5 w-3.5" />
+              {label}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Sonarr series search */}
+      {mediaType === "tv" && (
+        <SeriesSearch
+          token={token}
+          value={selectedSeries}
+          onChange={setSelectedSeries}
+          disabled={uploading}
+        />
+      )}
+
       <div className="flex gap-2">
         <div className="flex-1">
           <MountPicker mounts={mounts} value={mount} onChange={setMount} />
         </div>
-        <Button onClick={handleUpload} disabled={!file || !mount || uploading}>
+        <Button
+          onClick={handleUpload}
+          disabled={!file || !mount || uploading || (mediaType === "tv" && !selectedSeries)}
+        >
           <UploadCloud className="h-4 w-4" />
           {uploading ? `${pct}%` : "Upload"}
         </Button>

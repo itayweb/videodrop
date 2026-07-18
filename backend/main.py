@@ -470,6 +470,10 @@ async def init_upload(
     mount_name: str = Query(...),
     total_chunks: int = Query(...),
     custom_filename: str | None = Query(None),
+    media_type: str = Query("none"),
+    series_tvdb_id: int | None = Query(None),
+    series_title: str | None = Query(None),
+    series_year: int | None = Query(None),
     _: bool = Depends(require_auth),
 ):
     from .playlist import sanitize_filename
@@ -486,7 +490,11 @@ async def init_upload(
     final_filename = f"{base}{orig_ext}"
 
     job_id = new_job_id()
-    await register_upload_job(job_id, final_filename, mount.path, mount.name)
+    await register_upload_job(
+        job_id, final_filename, mount.path, mount.name,
+        media_type=media_type, series_tvdb_id=series_tvdb_id,
+        series_title=series_title, series_year=series_year,
+    )
     return {"job_id": job_id, "total_chunks": total_chunks}
 
 
