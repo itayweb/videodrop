@@ -21,7 +21,7 @@ import { PlaylistReview } from "./PlaylistReview";
 import { TelegramChannelReview } from "./TelegramChannelReview";
 import { DailyMotionReview } from "./DailyMotionReview";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
-import { cn } from "@/lib/utils";
+import { cn, genId } from "@/lib/utils";
 
 interface Mount { name: string; path: string }
 
@@ -115,7 +115,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     if (isDailymotionBulk) {
       setLoading(true);
       setDailymotionProgress({ fetched: 0, total: 0 });
-      const previewId = crypto.randomUUID();
+      const previewId = genId();
       const ws = openJobSocket(token, previewId, (data: any) => {
         if (data.type === "progress") {
           setDailymotionProgress({ fetched: data.fetched, total: data.total });
