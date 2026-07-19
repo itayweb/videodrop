@@ -582,6 +582,16 @@ async def sonarr_search_endpoint(q: str = Query(..., min_length=1), _: bool = De
     return results
 
 
+@app.get("/api/radarr/search")
+async def radarr_search_endpoint(q: str = Query(..., min_length=1), _: bool = Depends(require_auth)):
+    from .arr_client import radarr_search
+    cfg = get_config()
+    if cfg.radarr is None:
+        raise HTTPException(503, "Radarr not configured")
+    results = await radarr_search(cfg.radarr, q)
+    return results
+
+
 @app.get("/api/arr/status")
 def arr_status(_: bool = Depends(require_auth)):
     cfg = get_config()

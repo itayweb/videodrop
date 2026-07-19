@@ -21,6 +21,7 @@ import { PlaylistReview } from "./PlaylistReview";
 import { TelegramChannelReview } from "./TelegramChannelReview";
 import { DailyMotionReview } from "./DailyMotionReview";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
+import { MovieSearch, RadarrResult } from "./MovieSearch";
 import { cn, genId } from "@/lib/utils";
 
 interface Mount { name: string; path: string }
@@ -57,6 +58,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   const [mount, setMount] = useState(mounts[0]?.name ?? "");
   const [mediaType, setMediaType] = useState<MediaType>("none");
   const [selectedSeries, setSelectedSeries] = useState<SonarrResult | null>(null);
+  const [selectedMovie, setSelectedMovie] = useState<RadarrResult | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
   const [notice, setNotice] = useState("");
@@ -78,6 +80,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
   function handleMediaTypeChange(t: MediaType) {
     setMediaType(t);
     setSelectedSeries(null);
+    setSelectedMovie(null);
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -147,6 +150,10 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
       setError("Please select a TV series from the search results.");
       return;
     }
+    if (mediaType === "movie" && !selectedMovie) {
+      setError("Please select a movie from the search results.");
+      return;
+    }
     setLoading(true);
     try {
       const { job_id } = await submitUrl(
@@ -163,6 +170,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
       setUrl("");
       setFilename("");
       setSelectedSeries(null);
+      setSelectedMovie(null);
       setMediaType("none");
     } catch (err: any) {
       setError(err.message ?? "Failed to submit");
@@ -218,7 +226,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
 
   const canSubmit =
     url.trim() && !loading &&
-    (isPlaylist || isChannel || isDailymotionBulk || (mount && (mediaType !== "tv" || !!selectedSeries)));
+    (isPlaylist || isChannel || isDailymotionBulk || (mount && (mediaType !== "tv" || !!selectedSeries) && (mediaType !== "movie" || !!selectedMovie)));
 
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
@@ -353,6 +361,16 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
               token={token}
               value={selectedSeries}
               onChange={setSelectedSeries}
+              disabled={loading}
+            />
+          )}
+
+          {/* Radarr movie search */}
+          {mediaType === "movie" && (
+            <MovieSearch
+              token={token}
+              value={selectedMovie}
+              onChange={setSelectedMovie}
               disabled={loading}
             />
           )}

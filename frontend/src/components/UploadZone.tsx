@@ -5,6 +5,7 @@ import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { MountPicker } from "./MountPicker";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
+import { MovieSearch, RadarrResult } from "./MovieSearch";
 import { cn } from "@/lib/utils";
 
 interface Mount {
@@ -33,6 +34,7 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
   const [customFileName, setCustomFileName] = useState("");
   const [mediaType, setMediaType] = useState<MediaType>("none");
   const [selectedSeries, setSelectedSeries] = useState<SonarrResult | null>(null);
+  const [selectedMovie, setSelectedMovie] = useState<RadarrResult | null>(null);
   const [uploading, setUploading] = useState(false);
   const [pct, setPct] = useState(0);
   const [error, setError] = useState("");
@@ -46,6 +48,7 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
   function handleMediaTypeChange(t: MediaType) {
     setMediaType(t);
     setSelectedSeries(null);
+    setSelectedMovie(null);
   }
 
   function handleDrop(e: React.DragEvent) {
@@ -61,6 +64,10 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
       setError("Please select a TV series from the search results.");
       return;
     }
+    if (mediaType === "movie" && !selectedMovie) {
+      setError("Please select a movie from the search results.");
+      return;
+    }
     setError("");
     setUploading(true);
     setPct(0);
@@ -74,6 +81,7 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
       setCustomFileName("");
       setMediaType("none");
       setSelectedSeries(null);
+      setSelectedMovie(null);
       setPct(0);
     } catch (err: any) {
       setError(err.message ?? "Upload failed");
@@ -151,13 +159,23 @@ export function UploadZone({ token, mounts, onJobCreated }: Props) {
         />
       )}
 
+      {/* Radarr movie search */}
+      {mediaType === "movie" && (
+        <MovieSearch
+          token={token}
+          value={selectedMovie}
+          onChange={setSelectedMovie}
+          disabled={uploading}
+        />
+      )}
+
       <div className="flex gap-2">
         <div className="flex-1">
           <MountPicker mounts={mounts} value={mount} onChange={setMount} />
         </div>
         <Button
           onClick={handleUpload}
-          disabled={!file || !mount || uploading || (mediaType === "tv" && !selectedSeries)}
+          disabled={!file || !mount || uploading || (mediaType === "tv" && !selectedSeries) || (mediaType === "movie" && !selectedMovie)}
         >
           <UploadCloud className="h-4 w-4" />
           {uploading ? `${pct}%` : "Upload"}

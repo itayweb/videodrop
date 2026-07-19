@@ -265,6 +265,14 @@ export async function searchSonarr(token: string, q: string) {
   return res.json() as Promise<{ tvdbId: number; title: string; year: number; overview: string; inSonarr: boolean }[]>;
 }
 
+export async function searchRadarr(token: string, q: string) {
+  const res = await fetch(`/api/radarr/search?q=${encodeURIComponent(q)}`, {
+    headers: authHeader(token),
+  });
+  if (!res.ok) throw new Error(await res.text());
+  return res.json() as Promise<{ tmdbId: number; title: string; year: number; overview: string; inRadarr: boolean }[]>;
+}
+
 export async function fetchArrStatus(token: string) {
   const res = await fetch("/api/arr/status", { headers: authHeader(token) });
   if (!res.ok) return { sonarr: false, radarr: false };
@@ -300,6 +308,13 @@ export async function initUpload(
   return res.json() as Promise<{ job_id: string }>;
 }
 
+const CHUNK_UPLOAD_MAX_ATTEMPTS = 3;
+const CHUNK_UPLOAD_RETRY_DELAY_MS = 1500;
+
+function sleep(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
 export async function uploadChunk(
   token: string,
   jobId: string,
@@ -314,15 +329,27 @@ export async function uploadChunk(
     chunk_index: String(chunkIndex),
     total_chunks: String(totalChunks),
   });
-  const form = new FormData();
-  form.append("file", blob, filename);
-  const res = await fetch(`/api/jobs/upload/chunk?${params}`, {
-    method: "POST",
-    headers: authHeader(token),
-    body: form,
-  });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json();
+
+  let lastError: string = "";
+  for (let attempt = 1; attempt <= CHUNK_UPLOAD_MAX_ATTEMPTS; attempt++) {
+    try {
+      const form = new FormData();
+      form.append("file", blob, filename);
+      const res = await fetch(`/api/jobs/upload/chunk?${params}`, {
+        method: "POST",
+        headers: authHeader(token),
+        body: form,
+      });
+      if (res.ok) return res.json();
+      lastError = await res.text();
+      if (res.status < 500) break; // don't retry client errors (bad request, auth, etc.)
+    } catch (err: any) {
+      // Network-level failure (e.g. "TypeError: Failed to fetch") — worth retrying.
+      lastError = err?.message ?? String(err);
+    }
+    if (attempt < CHUNK_UPLOAD_MAX_ATTEMPTS) await sleep(CHUNK_UPLOAD_RETRY_DELAY_MS);
+  }
+  throw new Error(`Upload failed at chunk ${chunkIndex + 1}/${totalChunks}: ${lastError}`);
 }
 
 export async function uploadFile(

@@ -204,6 +204,30 @@ async def sonarr_import_episode(cfg: ArrConfig, file_path: str, series_id: int) 
 
 # ── Radarr ─────────────────────────────────────────────────────────────────────
 
+async def radarr_search(cfg: ArrConfig, query: str) -> list[dict]:
+    """Search for a movie by name. Returns both already-added and TMDB results."""
+    async with httpx.AsyncClient(timeout=30) as client:
+        r = await client.get(
+            f"{cfg.url.rstrip('/')}/api/v3/movie/lookup",
+            params={"term": query},
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+        results = r.json()
+
+    out = []
+    for m in results[:10]:
+        out.append({
+            "tmdbId": m.get("tmdbId"),
+            "title": m.get("title", ""),
+            "year": m.get("year", 0),
+            "overview": m.get("overview", "")[:120],
+            "inRadarr": bool(m.get("id")),
+            "radarrId": m.get("id"),
+        })
+    return out
+
+
 async def radarr_import_movie(cfg: ArrConfig, file_path: str) -> None:
     """Move the movie file into the Radarr download folder and trigger a scan.
 
