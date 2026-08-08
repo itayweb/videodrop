@@ -21,3 +21,20 @@ export function genId(): string {
   const hex = Array.from(bytes, (b) => b.toString(16).padStart(2, "0")).join("");
   return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
+
+export function formatBytes(bytes: number): string {
+  const units = ["B", "KB", "MB", "GB", "TB", "PB"];
+  let value = bytes;
+  let i = 0;
+  while (value >= 1024 && i < units.length - 1) {
+    value /= 1024;
+    i++;
+  }
+  return `${value < 10 && i > 0 ? value.toFixed(1) : Math.round(value)} ${units[i]}`;
+}
+
+/** True when `child` sits inside `parent`, matching whole path segments. */
+export function isUnder(child: string, parent: string): boolean {
+  const strip = (p: string) => p.replace(/\/+$/, "");
+  return child === strip(parent) || child.startsWith(strip(parent) + "/");
+}

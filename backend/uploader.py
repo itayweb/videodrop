@@ -53,5 +53,6 @@ async def assemble_and_move(job_id: str, filename: str, dest_dir: str) -> Path:
                 await out.write(await f.read())
 
     shutil.rmtree(job_tmp, ignore_errors=True)
-    await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
+    # Not done yet — the worker still has to place the file at its destination
+    await ws_hub.broadcast(job_id, {"status": "processing", "pct": 99})
     return out_file

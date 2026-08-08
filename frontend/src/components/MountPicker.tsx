@@ -1,9 +1,6 @@
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "./ui/select";
-
-interface Mount {
-  name: string;
-  path: string;
-}
+import type { Mount } from "@/lib/api";
+import { formatBytes } from "@/lib/utils";
 
 interface Props {
   mounts: Mount[];
@@ -22,6 +19,11 @@ export function MountPicker({ mounts, value, onChange }: Props) {
           <SelectItem key={m.name} value={m.name}>
             <span className="font-medium">{m.name}</span>
             <span className="ml-2 text-muted-foreground text-xs">{m.path}</span>
+            {m.free_bytes != null && (
+              <span className="ml-2 text-muted-foreground text-xs">
+                · {formatBytes(m.free_bytes)} free
+              </span>
+            )}
           </SelectItem>
         ))}
       </SelectContent>

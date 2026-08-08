@@ -10,6 +10,8 @@ export interface SonarrResult {
   year: number;
   overview: string;
   inSonarr: boolean;
+  /** Series folder, only set once the series is in Sonarr — tells us which drive it lives on */
+  path: string | null;
 }
 
 interface Props {

@@ -11,8 +11,7 @@ import { Badge } from "./ui/badge";
 import { MountPicker } from "./MountPicker";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { cn } from "@/lib/utils";
-
-interface Mount { name: string; path: string }
+import type { Mount } from "@/lib/api";
 
 interface EntryRow {
   selected: boolean;

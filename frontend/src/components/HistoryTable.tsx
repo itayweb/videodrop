@@ -1,4 +1,5 @@
 import { Badge } from "./ui/badge";
+import { cn } from "@/lib/utils";
 
 interface Job {
   id: string;
@@ -17,8 +18,9 @@ interface Props {
   jobs: Job[];
 }
 
-function statusVariant(s: string): "default" | "success" | "destructive" | "warning" | "secondary" {
-  if (s === "done") return "success";
+function statusVariant(s: string, error?: string | null): "default" | "success" | "destructive" | "warning" | "secondary" {
+  // A done job carrying an error downloaded fine but failed to import — not a clean success
+  if (s === "done") return error ? "warning" : "success";
   if (s === "failed") return "destructive";
   if (s === "cancelled") return "secondary";
   if (s === "queued" || s === "running") return "warning";
@@ -57,11 +59,16 @@ export function HistoryTable({ jobs }: Props) {
                   {job.batch_label && (
                     <Badge variant="secondary" className="text-[10px] px-1 py-0 mt-0.5">{job.batch_label}</Badge>
                   )}
-                  {job.error && <span className="text-xs text-destructive block">{job.error}</span>}
+                  {job.error && (
+                    <span className={cn(
+                      "text-xs block",
+                      job.status === "done" ? "text-yellow-400" : "text-destructive",
+                    )}>{job.error}</span>
+                  )}
                 </td>
                 <td className="py-2 pr-4 whitespace-nowrap">{job.dest_mount}</td>
                 <td className="py-2 pr-4">
-                  <Badge variant={statusVariant(job.status)}>{job.status}</Badge>
+                  <Badge variant={statusVariant(job.status, job.error)}>{job.status}</Badge>
                 </td>
                 <td className="py-2 pr-4 whitespace-nowrap text-muted-foreground text-xs">{fmt(job.created_at)}</td>
                 <td className="py-2 whitespace-nowrap text-muted-foreground text-xs">{fmt(job.finished_at)}</td>

@@ -1,7 +1,7 @@
 import { useEffect, useState, useCallback } from "react";
 import { Film, RefreshCw, LogOut } from "lucide-react";
 import * as Tabs from "@radix-ui/react-tabs";
-import { fetchConfig, fetchJobs, PlaylistConfirmResult, TelegramChannelConfirmResult, DailymotionConfirmResult } from "./lib/api";
+import { fetchConfig, fetchJobs, type Mount, PlaylistConfirmResult, TelegramChannelConfirmResult, DailymotionConfirmResult } from "./lib/api";
 import { UrlForm } from "./components/UrlForm";
 import { UploadZone } from "./components/UploadZone";
 import { JobProgress } from "./components/JobProgress";
@@ -11,11 +11,6 @@ import { SettingsForm } from "./components/SettingsForm";
 import { Button } from "./components/ui/button";
 import { Input } from "./components/ui/input";
 import { cn } from "./lib/utils";
-
-interface Mount {
-  name: string;
-  path: string;
-}
 
 interface ActiveJob {
   jobId: string;
