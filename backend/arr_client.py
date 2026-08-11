@@ -1,7 +1,7 @@
 """Async HTTP client for Sonarr and Radarr APIs."""
 import asyncio
+import os
 import pathlib
-import shutil
 
 import httpx
 from .config import ArrConfig
@@ -9,6 +9,40 @@ from .config import ArrConfig
 
 def _headers(cfg: ArrConfig) -> dict:
     return {"X-Api-Key": cfg.api_key, "Content-Type": "application/json"}
+
+
+# ── Root folders (same endpoint shape in both Sonarr and Radarr) ───────────────
+
+async def get_root_folders(cfg: ArrConfig) -> list[dict]:
+    async with httpx.AsyncClient(timeout=10) as client:
+        r = await client.get(
+            f"{cfg.url.rstrip('/')}/api/v3/rootfolder",
+            headers=_headers(cfg),
+        )
+        r.raise_for_status()
+        return r.json()
+
+
+def resolve_root_folder(roots: list[dict], mount_path: str) -> str | None:
+    """Return the root folder that lives under mount_path, or None.
+
+    Mounts map 1:1 to root folders, so the first match wins.
+    """
+    mount = pathlib.Path(mount_path)
+    for root in roots:
+        path = root.get("path")
+        if path and pathlib.Path(path).is_relative_to(mount):
+            return path
+    return None
+
+
+async def move_into(src: str | pathlib.Path, dest_dir: pathlib.Path) -> pathlib.Path:
+    """Move a file into dest_dir on the same filesystem — an atomic rename."""
+    src = pathlib.Path(src)
+    dest_dir.mkdir(parents=True, exist_ok=True)
+    dest = dest_dir / src.name
+    await asyncio.to_thread(os.replace, str(src), str(dest))
+    return dest
 
 
 # ── Sonarr ─────────────────────────────────────────────────────────────────────
@@ -33,6 +67,8 @@ async def sonarr_search(cfg: ArrConfig, query: str) -> list[dict]:
             "overview": s.get("overview", "")[:120],
             "inSonarr": bool(s.get("id")),
             "sonarrId": s.get("id"),
+            # Only set for series already added — tells the UI which drive it lives on
+            "path": s.get("path") if s.get("id") else None,
         })
     return out
 
@@ -48,39 +84,6 @@ async def sonarr_get_default_profile_id(cfg: ArrConfig) -> int:
     if not profiles:
         raise RuntimeError("No quality profiles found in Sonarr")
     return profiles[0]["id"]
-
-
-async def sonarr_get_root_folder(cfg: ArrConfig, mount_path: str | None = None) -> str:
-    """Pick which Sonarr root folder a new series should be created under.
-
-    If mount_path matches one of Sonarr's configured root folders (exact match,
-    ignoring a trailing slash), use that one — this lets a brand-new series land
-    under the mount the user picked in the UI. Otherwise fall back to Sonarr's
-    first root folder.
-    """
-    async with httpx.AsyncClient(timeout=10) as client:
-        r = await client.get(
-            f"{cfg.url.rstrip('/')}/api/v3/rootfolder",
-            headers=_headers(cfg),
-        )
-        r.raise_for_status()
-        folders = r.json()
-    if not folders:
-        raise RuntimeError("No root folders found in Sonarr")
-
-    if mount_path:
-        target = mount_path.rstrip("/")
-        for f in folders:
-            if f["path"].rstrip("/") == target:
-                return f["path"]
-        print(
-            f"[sonarr] no root folder matches mount path {mount_path!r} "
-            f"(Sonarr has: {[f['path'] for f in folders]}) — "
-            f"falling back to {folders[0]['path']!r}",
-            flush=True,
-        )
-
-    return folders[0]["path"]
 
 
 async def sonarr_get_series_id(cfg: ArrConfig, tvdb_id: int) -> int | None:
@@ -118,20 +121,19 @@ async def sonarr_episodes_with_files(cfg: ArrConfig, series_id: int) -> set[tupl
 
 
 async def sonarr_add_series(
-    cfg: ArrConfig, tvdb_id: int, title: str, year: int, mount_path: str | None = None
+    cfg: ArrConfig, tvdb_id: int, title: str, year: int, root_folder: str
 ) -> int:
-    """Add a series to Sonarr (creates its folder). Returns the Sonarr series id.
+    """Add a series to Sonarr under root_folder. Returns the Sonarr series id.
 
-    mount_path is only used when the series doesn't exist yet, to pick which
-    root folder to create it under; an existing series keeps its existing
-    folder regardless of mount_path.
+    root_folder is resolved from the destination mount the user picked, so a new
+    series is created on the drive they chose rather than on Sonarr's first root.
+    An existing series keeps whatever folder Sonarr already has for it.
     """
     existing_id = await sonarr_get_series_id(cfg, tvdb_id)
     if existing_id:
         return existing_id
 
     profile_id = await sonarr_get_default_profile_id(cfg)
-    root_folder = await sonarr_get_root_folder(cfg, mount_path)
 
     payload = {
         "tvdbId": tvdb_id,
@@ -156,44 +158,25 @@ async def sonarr_add_series(
         return r.json()["id"]
 
 
-async def sonarr_import_episode(cfg: ArrConfig, file_path: str, series_id: int) -> None:
-    """Move the episode file into the Sonarr series folder then trigger a rescan.
-
-    This is more reliable than the manual-import API because we control the file
-    move ourselves — no dependency on Sonarr's download-client tracking.
-    Sonarr's RescanSeries command then detects the new file in its own folder
-    and links it to the correct episode automatically.
-    """
-    base = cfg.url.rstrip("/")
-
-    # ── 1. Get the series folder path from Sonarr ──────────────────────────────
+async def sonarr_get_series_path(cfg: ArrConfig, series_id: int) -> str:
     async with httpx.AsyncClient(timeout=10) as client:
         r = await client.get(
-            f"{base}/api/v3/series/{series_id}",
+            f"{cfg.url.rstrip('/')}/api/v3/series/{series_id}",
             headers=_headers(cfg),
         )
         r.raise_for_status()
-        series_path = r.json()["path"]
+        return r.json()["path"]
 
-    src = pathlib.Path(file_path)
-    dest_dir = pathlib.Path(series_path)
-    dest = dest_dir / src.name
 
-    print(f"[sonarr] moving {str(src)!r} → {str(dest)!r}", flush=True)
+async def sonarr_rescan_series(cfg: ArrConfig, series_id: int) -> None:
+    """Tell Sonarr to rescan its series folder so it picks up the new file.
 
-    # ── 2. Move the file (blocking but near-instant on same filesystem) ────────
-    # Adding a series to Sonarr doesn't create its on-disk folder (default
-    # "create empty series folders" is off), so shutil.move would fail with
-    # ENOENT on the missing parent — create it first.
-    await asyncio.to_thread(lambda: dest_dir.mkdir(parents=True, exist_ok=True))
-    await asyncio.to_thread(shutil.move, str(src), str(dest))
-
-    print(f"[sonarr] move done — queuing RescanSeries (seriesId={series_id})", flush=True)
-
-    # ── 3. Tell Sonarr to rescan its series folder ─────────────────────────────
+    Only worth calling when the file landed inside Sonarr's own series folder —
+    a series has exactly one path, so a rescan can't see files on another drive.
+    """
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
-            f"{base}/api/v3/command",
+            f"{cfg.url.rstrip('/')}/api/v3/command",
             json={"name": "RescanSeries", "seriesId": series_id},
             headers=_headers(cfg),
         )
@@ -228,20 +211,18 @@ async def radarr_search(cfg: ArrConfig, query: str) -> list[dict]:
     return out
 
 
-async def radarr_import_movie(cfg: ArrConfig, file_path: str) -> None:
-    """Move the movie file into the Radarr download folder and trigger a scan.
+async def radarr_scan(cfg: ArrConfig, path: str) -> None:
+    """Point DownloadedMoviesScan at a folder Radarr can import from in place.
 
-    We use DownloadedMoviesScan pointed at the specific file so Radarr picks it
-    up without needing a registered download client.
+    The file has already been moved onto the destination mount, so Radarr never
+    has to relocate it across drives.
     """
-    base = cfg.url.rstrip("/")
-
-    print(f"[radarr] triggering DownloadedMoviesScan for {file_path!r}", flush=True)
+    print(f"[radarr] triggering DownloadedMoviesScan for {path!r}", flush=True)
 
     async with httpx.AsyncClient(timeout=15) as client:
         r = await client.post(
-            f"{base}/api/v3/command",
-            json={"name": "DownloadedMoviesScan", "path": file_path},
+            f"{cfg.url.rstrip('/')}/api/v3/command",
+            json={"name": "DownloadedMoviesScan", "path": path},
             headers=_headers(cfg),
         )
         r.raise_for_status()

@@ -1,17 +1,12 @@
 import { useEffect, useRef, useState } from "react";
 import { UploadCloud, Ban, Tv, Film } from "lucide-react";
-import { uploadFile, fetchArrStatus } from "@/lib/api";
+import { uploadFile, fetchArrStatus, type Mount } from "@/lib/api";
 import { Button } from "./ui/button";
 import { Input } from "./ui/input";
 import { MountPicker } from "./MountPicker";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { MovieSearch, RadarrResult } from "./MovieSearch";
 import { cn } from "@/lib/utils";
-
-interface Mount {
-  name: string;
-  path: string;
-}
 
 interface Props {
   token: string;

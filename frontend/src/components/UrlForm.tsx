@@ -22,9 +22,8 @@ import { TelegramChannelReview } from "./TelegramChannelReview";
 import { DailyMotionReview } from "./DailyMotionReview";
 import { SeriesSearch, SonarrResult } from "./SeriesSearch";
 import { MovieSearch, RadarrResult } from "./MovieSearch";
-import { cn, genId } from "@/lib/utils";
-
-interface Mount { name: string; path: string }
+import { cn, genId, isUnder } from "@/lib/utils";
+import type { Mount } from "@/lib/api";
 
 interface Props {
   token: string;
@@ -228,6 +227,18 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
     url.trim() && !loading &&
     (isPlaylist || isChannel || isDailymotionBulk || (mount && (mediaType !== "tv" || !!selectedSeries) && (mediaType !== "movie" || !!selectedMovie)));
 
+  // A Sonarr series has exactly one folder. Downloading to a different drive still
+  // organises the file there, but Sonarr won't scan it into the library.
+  const selectedMountPath = mounts.find((m) => m.name === mount)?.path;
+  const seriesMount = selectedSeries?.path
+    ? mounts.find((m) => isUnder(selectedSeries.path!, m.path))
+    : undefined;
+  const splitWarning =
+    selectedSeries?.path && selectedMountPath && !isUnder(selectedSeries.path, selectedMountPath)
+      ? `${selectedSeries.title} lives on ${seriesMount?.name ?? selectedSeries.path} — ` +
+        `downloading to ${mount} places it outside Sonarr's library.`
+      : null;
+
   return (
     <form onSubmit={handleSubmit} className="space-y-3">
       {/* Source toggle */}
@@ -391,6 +402,7 @@ export function UrlForm({ token, mounts, onJobCreated, onBatchCreated }: Props) 
         </Button>
       </div>
 
+      {splitWarning && <p className="text-xs text-yellow-400">⚠ {splitWarning}</p>}
       {error && <p className="text-xs text-destructive">{error}</p>}
       {notice && <p className="text-xs text-muted-foreground">{notice}</p>}
 

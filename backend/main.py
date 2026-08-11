@@ -1,5 +1,6 @@
 """FastAPI application entry point."""
 import asyncio
+import shutil
 import uuid
 from contextlib import asynccontextmanager
 from pathlib import Path
@@ -59,10 +60,23 @@ app.add_middleware(
 
 # ── Config / health ────────────────────────────────────────────────────────────
 
+def _free_bytes(path: str) -> int | None:
+    """Free space on a mount, or None if it isn't reachable right now."""
+    try:
+        return shutil.disk_usage(path).free
+    except OSError:
+        return None
+
+
 @app.get("/api/config")
 def api_config(_: bool = Depends(require_auth)):
     cfg = get_config()
-    return {"mounts": [{"name": m.name, "path": m.path} for m in cfg.mounts]}
+    return {
+        "mounts": [
+            {"name": m.name, "path": m.path, "free_bytes": _free_bytes(m.path)}
+            for m in cfg.mounts
+        ]
+    }
 
 
 @app.get("/api/config/full")
@@ -174,12 +188,45 @@ class UrlJobRequest(BaseModel):
     series_year: int | None = None
 
 
+async def _root_folder_for_mount(arr, arr_name: str, mount: Mount) -> str:
+    """Resolve the arr root folder living on this mount, or reject the job.
+
+    Validating here means an impossible mount/library combination costs nothing —
+    the download never starts.
+    """
+    from .arr_client import get_root_folders, resolve_root_folder
+
+    if arr is None:
+        raise HTTPException(503, f"{arr_name} not configured")
+    roots = await get_root_folders(arr)
+    root = resolve_root_folder(roots, mount.path)
+    if root is None:
+        raise HTTPException(
+            400,
+            f"No {arr_name} root folder under {mount.name} ({mount.path}). "
+            f"Add one in {arr_name}, or pick another mount.",
+        )
+    return root
+
+
+async def _root_folder_for_media(cfg, media_type: str, mount: Mount) -> str | None:
+    """Root folder for this media type on this mount; None when no arr is involved."""
+    if media_type == "tv":
+        return await _root_folder_for_mount(cfg.sonarr, "Sonarr", mount)
+    if media_type == "movie":
+        return await _root_folder_for_mount(cfg.radarr, "Radarr", mount)
+    return None
+
+
 @app.post("/api/jobs/url", status_code=status.HTTP_202_ACCEPTED)
 async def submit_url_job(req: UrlJobRequest, _: bool = Depends(require_auth)):
     cfg = get_config()
     mount = next((m for m in cfg.mounts if m.name == req.mount_name), None)
     if mount is None:
         raise HTTPException(400, f"Unknown mount: {req.mount_name}")
+
+    root_folder_path = await _root_folder_for_media(cfg, req.media_type, mount)
+
     job_id = new_job_id()
     await enqueue_url_job(
         job_id, req.url, mount.path, mount.name,
@@ -188,6 +235,7 @@ async def submit_url_job(req: UrlJobRequest, _: bool = Depends(require_auth)):
         series_tvdb_id=req.series_tvdb_id,
         series_title=req.series_title,
         series_year=req.series_year,
+        root_folder_path=root_folder_path,
     )
     return {"job_id": job_id}
 
@@ -268,6 +316,8 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
         except Exception:
             imported = set()  # Sonarr unreachable → fall back to mount check only
 
+    root_folder_path = await _root_folder_for_media(cfg, req.media_type, mount)
+
     jobs = []
     skipped = []
     for entry in sorted(req.entries, key=lambda e: (e.season, e.episode_number)):
@@ -293,6 +343,7 @@ async def playlist_confirm(req: PlaylistConfirmRequest, _: bool = Depends(requir
             dest_subpath=subpath,
             batch_id=batch_id,
             batch_label=batch_label,
+            root_folder_path=root_folder_path,
         )
         jobs.append({"job_id": job_id, "filename": fname, "video_url": entry.video_url})
 
@@ -359,6 +410,7 @@ async def telegram_channel_confirm(req: TelegramChannelConfirmRequest, _: bool =
     batch_id = new_job_id()
     jobs = []
     skipped = []
+    root_folder_path = await _root_folder_for_media(cfg, req.media_type, mount)
     telegram_seen_ids = await get_telegram_seen(channel_id, [e.msg_id for e in req.entries])
 
     if req.dest_mode == "episodes":
@@ -411,6 +463,7 @@ async def telegram_channel_confirm(req: TelegramChannelConfirmRequest, _: bool =
                 dest_subpath=subpath,
                 batch_id=batch_id,
                 batch_label=batch_label,
+                root_folder_path=root_folder_path,
             )
             jobs.append({"job_id": job_id, "filename": fname, "msg_id": entry.msg_id})
 
@@ -490,6 +543,7 @@ async def dailymotion_confirm(req: DailymotionConfirmRequest, _: bool = Depends(
     batch_id = new_job_id()
     jobs = []
     skipped = []
+    root_folder_path = await _root_folder_for_media(cfg, req.media_type, mount)
     dm_seen = await get_dailymotion_seen([e.video_id for e in req.entries])
 
     if req.dest_mode == "episodes":
@@ -541,6 +595,7 @@ async def dailymotion_confirm(req: DailymotionConfirmRequest, _: bool = Depends(
                 dest_subpath=subpath,
                 batch_id=batch_id,
                 batch_label=batch_label,
+                root_folder_path=root_folder_path,
             )
             jobs.append({"job_id": job_id, "filename": fname, "video_id": entry.video_id})
 
@@ -628,11 +683,14 @@ async def init_upload(
         base = sanitize_filename(Path(filename).stem)
     final_filename = f"{base}{orig_ext}"
 
+    root_folder_path = await _root_folder_for_media(cfg, media_type, mount)
+
     job_id = new_job_id()
     await register_upload_job(
         job_id, final_filename, mount.path, mount.name,
         media_type=media_type, series_tvdb_id=series_tvdb_id,
         series_title=series_title, series_year=series_year,
+        root_folder_path=root_folder_path,
     )
     return {"job_id": job_id, "total_chunks": total_chunks}
 

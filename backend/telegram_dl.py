@@ -205,5 +205,6 @@ async def download_telegram(job_id: str, url: str, dest_dir: str, filename: str 
 
     await mark_telegram_seen(message.chat_id, message.id, str(out_file))
 
-    await ws_hub.broadcast(job_id, {"status": "done", "pct": 100})
+    # Not done yet — the worker still has to place the file at its destination
+    await ws_hub.broadcast(job_id, {"status": "processing", "pct": 99})
     return Path(out_file)

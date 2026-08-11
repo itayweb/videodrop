@@ -1,13 +1,42 @@
 const CHUNK_SIZE = 5 * 1024 * 1024; // 5 MB
 
+export interface Mount {
+  name: string;
+  path: string;
+  /** null when the mount isn't reachable */
+  free_bytes: number | null;
+}
+
+export interface SonarrResult {
+  tvdbId: number;
+  title: string;
+  year: number;
+  overview: string;
+  inSonarr: boolean;
+  /** Series folder, only set once the series is in Sonarr — tells us its drive */
+  path: string | null;
+}
+
 function authHeader(token: string) {
   return { Authorization: `Bearer ${token}` };
+}
+
+/** FastAPI wraps HTTPException messages in {detail}; show that rather than raw JSON. */
+async function toError(res: Response): Promise<Error> {
+  const body = await res.text();
+  try {
+    const parsed = JSON.parse(body);
+    if (typeof parsed?.detail === "string") return new Error(parsed.detail);
+  } catch {
+    /* not JSON — fall through to the raw body */
+  }
+  return new Error(body || res.statusText);
 }
 
 export async function fetchConfig(token: string) {
   const res = await fetch("/api/config", { headers: authHeader(token) });
   if (!res.ok) throw new Error("Unauthorized");
-  return res.json() as Promise<{ mounts: { name: string; path: string }[] }>;
+  return res.json() as Promise<{ mounts: Mount[] }>;
 }
 
 export async function submitUrl(
@@ -33,7 +62,7 @@ export async function submitUrl(
       series_year: seriesYear ?? null,
     }),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toError(res);
   return res.json() as Promise<{ job_id: string }>;
 }
 
@@ -261,8 +290,8 @@ export async function searchSonarr(token: string, q: string) {
   const res = await fetch(`/api/sonarr/search?q=${encodeURIComponent(q)}`, {
     headers: authHeader(token),
   });
-  if (!res.ok) throw new Error(await res.text());
-  return res.json() as Promise<{ tvdbId: number; title: string; year: number; overview: string; inSonarr: boolean }[]>;
+  if (!res.ok) throw await toError(res);
+  return res.json() as Promise<SonarrResult[]>;
 }
 
 export async function searchRadarr(token: string, q: string) {
@@ -304,7 +333,7 @@ export async function initUpload(
     method: "POST",
     headers: authHeader(token),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toError(res);
   return res.json() as Promise<{ job_id: string }>;
 }
 
@@ -380,7 +409,7 @@ export async function uploadFile(
 
 export async function fetchJobs(token: string, limit = 100) {
   const res = await fetch(`/api/jobs?limit=${limit}`, { headers: authHeader(token) });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toError(res);
   return res.json() as Promise<{ active: any[]; history: any[] }>;
 }
 
@@ -402,7 +431,7 @@ export interface FullConfig {
 
 export async function fetchFullConfig(token: string): Promise<FullConfig> {
   const res = await fetch("/api/config/full", { headers: authHeader(token) });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toError(res);
   return res.json();
 }
 
@@ -412,7 +441,7 @@ export async function saveConfig(token: string, cfg: FullConfig): Promise<void> 
     headers: { ...authHeader(token), "Content-Type": "application/json" },
     body: JSON.stringify(cfg),
   });
-  if (!res.ok) throw new Error(await res.text());
+  if (!res.ok) throw await toError(res);
 }
 
 export async function cancelJob(token: string, jobId: string) {

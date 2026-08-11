@@ -38,8 +38,9 @@ const STATUS_LABEL: Record<string, string> = {
   cancelled: "Cancelled",
 };
 
-function statusVariant(s: string): "default" | "success" | "destructive" | "warning" | "secondary" {
-  if (s === "done") return "success";
+function statusVariant(s: string, warning?: string): "default" | "success" | "destructive" | "warning" | "secondary" {
+  // A done job carrying a warning downloaded fine but failed to import — not a clean success
+  if (s === "done") return warning ? "warning" : "success";
   if (s === "failed") return "destructive";
   if (s === "cancelled") return "secondary";
   if (s === "queued") return "warning";
@@ -54,7 +55,8 @@ export function JobProgress({ token, jobId, source, type, mountName, customFileN
     const ws = openJobSocket(token, jobId, (data: ProgressMsg) => {
       setMsg({ ...data, pct: data.pct ?? 0 });
       if (data.status === "done" || data.status === "failed" || data.status === "cancelled") {
-        setTimeout(() => onDone?.(), 2000);
+        // Leave a warning up long enough to read; it also persists in the history table
+        setTimeout(() => onDone?.(), data.arr_warning ? 8000 : 2000);
       }
     });
     wsRef.current = ws;
@@ -79,7 +81,7 @@ export function JobProgress({ token, jobId, source, type, mountName, customFileN
             )}
           </div>
           <div className="flex items-center gap-2 shrink-0">
-            <Badge variant={statusVariant(msg.status)}>{label}</Badge>
+            <Badge variant={statusVariant(msg.status, msg.arr_warning)}>{label}</Badge>
             {!isTerminal && (
               <Button
                 size="icon"
