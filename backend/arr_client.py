@@ -24,15 +24,57 @@ async def get_root_folders(cfg: ArrConfig) -> list[dict]:
 
 
 def resolve_root_folder(roots: list[dict], mount_path: str) -> str | None:
-    """Return the root folder that lives under mount_path, or None.
+    """Return the arr root folder that lives on the same drive as mount_path.
 
-    Mounts map 1:1 to root folders, so the first match wins.
+    Two layouts both resolve here:
+      1. the root folder nested under the mount (mount == a drive root), and
+      2. the root folder a *sibling* of the download dir on one drive, e.g. a
+         mount of /mnt/drive4/Downloads and a root of /mnt/drive4/TV Shows.
+
+    Case 2 is what makes placement safe: move_into relies on os.replace, which
+    only works within one filesystem, so "same drive as the mount" is exactly
+    the set of roots we can move into. We match it by device id (st_dev) and,
+    when several roots share a filesystem, keep the one with the longest shared
+    path prefix so /mnt/drive4/Downloads is not handed a /mnt/drive1 root.
     """
     mount = pathlib.Path(mount_path)
+
+    # 1. Root nested under the mount — the original, unambiguous case.
     for root in roots:
         path = root.get("path")
         if path and pathlib.Path(path).is_relative_to(mount):
             return path
+
+    # 2. Root on the same filesystem as the mount (download dir and library are
+    #    siblings on one drive). Needs both paths to exist on this host, which
+    #    they do — the mount is where we stage and the root is where os.replace
+    #    lands the file.
+    try:
+        mount_dev = os.stat(mount).st_dev
+    except OSError:
+        return None
+
+    def _shared_prefix_len(path: str) -> int:
+        n = 0
+        for a, b in zip(pathlib.Path(path).parts, mount.parts):
+            if a != b:
+                break
+            n += 1
+        return n
+
+    same_fs = []
+    for root in roots:
+        path = root.get("path")
+        if not path:
+            continue
+        try:
+            if os.stat(path).st_dev == mount_dev:
+                same_fs.append(path)
+        except OSError:
+            continue
+
+    if same_fs:
+        return max(same_fs, key=_shared_prefix_len)
     return None
 
 
