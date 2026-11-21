@@ -24,6 +24,10 @@ _TRANSIENT_ERROR_MARKERS = ("403", "forbidden", "http error 5", "timed out")
 _MAX_DOWNLOAD_ATTEMPTS = 3
 _RETRY_DELAY_SECONDS = 3
 
+# An upload with no new chunk for this long is treated as abandoned
+_UPLOAD_MAX_IDLE_SECONDS = 30 * 60
+_UPLOAD_SWEEP_INTERVAL_SECONDS = 5 * 60
+
 
 def _is_transient_error(exc: Exception) -> bool:
     msg = str(exc).lower()
@@ -92,7 +96,81 @@ async def register_upload_job(
         "media_type": media_type, "series_tvdb_id": series_tvdb_id,
         "series_title": series_title, "series_year": series_year,
         "root_folder_path": root_folder_path,
+        "last_chunk_at": time.monotonic(),
     }
+
+
+def upload_staging(job_id: str) -> Path:
+    """Staging dir for an upload that is still receiving chunks.
+
+    Raises UploadRejected for unknown or no-longer-uploading jobs, so a chunk
+    can never be written for a job that isn't expecting one (and job_id from
+    the request is never used to build a path on its own).
+    """
+    from .uploader import UploadRejected
+    job = _active.get(job_id)
+    if job is None or job["type"] != "upload":
+        raise UploadRejected(404, f"Unknown upload job: {job_id}")
+    if job["status"] != "uploading":
+        raise UploadRejected(409, f"Upload job {job_id} is {job['status']}, not accepting chunks")
+    job["last_chunk_at"] = time.monotonic()
+    return staging_dir(job["mount_path"], job_id)
+
+
+async def fail_upload(job_id: str, error: str):
+    """Fail an upload that is still receiving chunks and delete its chunks."""
+    job = _active.get(job_id)
+    if job is None or job["status"] != "uploading":
+        return
+    job["status"] = "failed"
+    shutil.rmtree(staging_dir(job["mount_path"], job_id), ignore_errors=True)
+    await update_job_status(job_id, "failed", error=error)
+    await ws_hub.broadcast(job_id, {"status": "failed", "error": error})
+
+
+async def sweep_stale_uploads(max_idle_seconds: float = _UPLOAD_MAX_IDLE_SECONDS):
+    """Fail uploads that stopped receiving chunks (tab closed, network gone)."""
+    now = time.monotonic()
+    stale = [
+        job_id for job_id, job in _active.items()
+        if job["type"] == "upload" and job["status"] == "uploading"
+        and now - job.get("last_chunk_at", now) > max_idle_seconds
+    ]
+    for job_id in stale:
+        log.warning("Upload %s received no chunks for %ds — abandoning it", job_id, max_idle_seconds)
+        await fail_upload(job_id, "Upload abandoned: no chunks received for too long")
+
+
+def sweep_orphaned_staging(mount_paths: list[str]):
+    """Startup cleanup of upload chunks left by a previous run.
+
+    Nothing survives a restart (the queue is in memory), so any chunks on disk
+    are orphaned. Only chunk dirs are removed: a staging dir can also hold a
+    finished file the worker deliberately kept after a failed placement.
+    """
+    from .uploader import CHUNKS_SUBDIR, LEGACY_TMP_DIR
+    shutil.rmtree(LEGACY_TMP_DIR, ignore_errors=True)
+    for mount_path in mount_paths:
+        root = Path(mount_path) / TMP_SUBDIR
+        try:
+            job_dirs = [d for d in root.iterdir() if d.is_dir()]
+        except OSError:
+            continue  # no staging dir yet, or the mount is offline
+        for job_dir in job_dirs:
+            shutil.rmtree(job_dir / CHUNKS_SUBDIR, ignore_errors=True)
+            try:
+                job_dir.rmdir()  # only succeeds when nothing else is in it
+            except OSError:
+                pass
+
+
+async def _upload_janitor():
+    while True:
+        await asyncio.sleep(_UPLOAD_SWEEP_INTERVAL_SECONDS)
+        try:
+            await sweep_stale_uploads()
+        except Exception:
+            log.exception("Stale upload sweep failed")
 
 
 async def finalize_upload_job(job_id: str):
@@ -285,8 +363,10 @@ async def start_workers():
         return
     _workers_started = True
     cfg = get_config()
+    sweep_orphaned_staging([m.path for m in cfg.mounts])
     for _ in range(cfg.max_concurrent_jobs):
         asyncio.create_task(_worker())
+    asyncio.create_task(_upload_janitor())
 
 
 def get_active_jobs() -> list[dict]:
