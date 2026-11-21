@@ -26,14 +26,16 @@ from .db import get_job, get_jobs, get_telegram_seen, get_dailymotion_seen, init
 from .jobs import (
     cancel_job,
     enqueue_url_job,
+    fail_upload,
     finalize_upload_job,
     get_active_jobs,
     new_job_id,
     register_upload_job,
     start_workers,
+    upload_staging,
 )
 from . import ws_hub
-from .uploader import receive_chunk
+from .uploader import UploadRejected, is_disk_full, receive_chunk
 
 FRONTEND_DIST = Path(__file__).parent.parent / "frontend" / "dist"
 
@@ -704,7 +706,18 @@ async def upload_chunk(
     file: UploadFile = None,
     _: bool = Depends(require_auth),
 ):
-    done = await receive_chunk(job_id, filename, chunk_index, total_chunks, file)
+    try:
+        staging = upload_staging(job_id)
+        done = await receive_chunk(job_id, staging, chunk_index, total_chunks, file)
+    except UploadRejected as e:
+        raise HTTPException(e.status, str(e))
+    except OSError as e:
+        if not is_disk_full(e):
+            raise  # transient I/O error: a 500 lets the client retry the chunk
+        # Retrying can't help, and the chunks already written are just eating space
+        msg = "Not enough space on the destination drive for this upload"
+        await fail_upload(job_id, msg)
+        raise HTTPException(status.HTTP_507_INSUFFICIENT_STORAGE, msg)
     if done:
         await finalize_upload_job(job_id)
     return {"received": chunk_index + 1, "done": done}

@@ -371,7 +371,9 @@ export async function uploadChunk(
       });
       if (res.ok) return res.json();
       lastError = await res.text();
-      if (res.status < 500) break; // don't retry client errors (bad request, auth, etc.)
+      // Don't retry client errors (bad request, auth, etc.) or a full disk (507):
+      // the server has already failed the job, so a retry would only mask why.
+      if (res.status < 500 || res.status === 507) break;
     } catch (err: any) {
       // Network-level failure (e.g. "TypeError: Failed to fetch") — worth retrying.
       lastError = err?.message ?? String(err);
